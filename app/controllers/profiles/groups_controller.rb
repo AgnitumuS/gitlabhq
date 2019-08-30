@@ -1,24 +1,24 @@
-class Profiles::GroupsController < ApplicationController
-  layout "profile"
+# frozen_string_literal: true
 
-  def index
-    @user_groups = current_user.users_groups.page(params[:page]).per(20)
-  end
+class Profiles::GroupsController < Profiles::ApplicationController
+  include RoutableActions
 
-  def leave
-    @users_group = group.users_groups.where(user_id: current_user.id).first
+  def update
+    group = find_routable!(Group, params[:id])
+    notification_setting = current_user.notification_settings.find_by(source: group) # rubocop: disable CodeReuse/ActiveRecord
 
-    if group.owner == current_user
-      redirect_to(profile_groups_path, alert: "You can't leave group. You must transfer it to another owner before leaving.")
+    if notification_setting.update(update_params)
+      flash[:notice] = "Notification settings for #{group.name} saved"
     else
-      @users_group.destroy
-      redirect_to(profile_groups_path, info: "You left #{group.name} group.")
+      flash[:alert] = "Failed to save new settings for #{group.name}"
     end
+
+    redirect_back_or_default(default: profile_notifications_path)
   end
 
   private
 
-  def group
-    @group ||= Group.find_by_path(params[:id])
+  def update_params
+    params.require(:notification_setting).permit(:notification_email)
   end
 end

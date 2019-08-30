@@ -1,68 +1,42 @@
+# frozen_string_literal: true
+
 class EventFilter
-  attr_accessor :params
+  attr_accessor :filter
 
-  class << self
-    def default_filter
-      %w{ push issues merge_requests team}
-    end
+  ALL = 'all'
+  PUSH = 'push'
+  MERGED = 'merged'
+  ISSUE = 'issue'
+  COMMENTS = 'comments'
+  TEAM = 'team'
+  FILTERS = [ALL, PUSH, MERGED, ISSUE, COMMENTS, TEAM].freeze
 
-    def push
-      'push'
-    end
-
-    def merged
-      'merged'
-    end
-
-    def comments
-      'comments'
-    end
-
-    def team
-      'team'
-    end
+  def initialize(filter)
+    # Split using comma to maintain backward compatibility Ex/ "filter1,filter2"
+    filter = filter.to_s.split(',')[0].to_s
+    @filter = FILTERS.include?(filter) ? filter : ALL
   end
 
-  def initialize params
-    @params = if params
-                params.dup
-              else
-                []#EventFilter.default_filter
-              end
+  def active?(key)
+    filter == key.to_s
   end
 
-  def apply_filter events
-    return events unless params.present?
-
-    filter = params.dup
-
-    actions = []
-    actions << Event::PUSHED if filter.include? 'push'
-    actions << Event::MERGED if filter.include? 'merged'
-
-    if filter.include? 'team'
-      actions << Event::JOINED
-      actions << Event::LEFT
-    end
-
-    actions << Event::COMMENTED if filter.include? 'comments'
-
-    events = events.where(action: actions)
-  end
-
-  def options key
-    filter = params.dup
-
-    if filter.include? key
-      filter.delete key
+  # rubocop: disable CodeReuse/ActiveRecord
+  def apply_filter(events)
+    case filter
+    when PUSH
+      events.where(action: Event::PUSHED)
+    when MERGED
+      events.where(action: Event::MERGED)
+    when COMMENTS
+      events.where(action: Event::COMMENTED)
+    when TEAM
+      events.where(action: [Event::JOINED, Event::LEFT, Event::EXPIRED])
+    when ISSUE
+      events.where(action: [Event::CREATED, Event::UPDATED, Event::CLOSED, Event::REOPENED], target_type: 'Issue')
     else
-      filter << key
+      events
     end
-
-    filter
   end
-
-  def active? key
-    params.include? key
-  end
+  # rubocop: enable CodeReuse/ActiveRecord
 end

@@ -1,114 +1,116 @@
+# frozen_string_literal: true
+
 module API
-  # Notes API
   class Notes < Grape::API
+    include PaginationParams
+    helpers ::API::Helpers::NotesHelpers
+
     before { authenticate! }
 
-    NOTEABLE_TYPES = [Issue, MergeRequest, Snippet]
+    Helpers::NotesHelpers.noteable_types.each do |noteable_type|
+      parent_type = noteable_type.parent_class.to_s.underscore
+      noteables_str = noteable_type.to_s.underscore.pluralize
 
-    resource :projects do
-      # Get a list of project wall notes
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      # Example Request:
-      #   GET /projects/:id/notes
-      get ":id/notes" do
-        @notes = user_project.notes.common
-
-        # Get recent notes if recent = true
-        @notes = @notes.order('id DESC') if params[:recent]
-
-        present paginate(@notes), with: Entities::Note
+      params do
+        requires :id, type: String, desc: "The ID of a #{parent_type}"
       end
-
-      # Get a single project wall note
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   note_id (required) - The ID of a note
-      # Example Request:
-      #   GET /projects/:id/notes/:note_id
-      get ":id/notes/:note_id" do
-        @note = user_project.notes.common.find(params[:note_id])
-        present @note, with: Entities::Note
-      end
-
-      # Create a new project wall note
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   body (required) - The content of a note
-      # Example Request:
-      #   POST /projects/:id/notes
-      post ":id/notes" do
-        required_attributes! [:body]
-
-        @note = user_project.notes.new(note: params[:body])
-        @note.author = current_user
-
-        if @note.save
-          present @note, with: Entities::Note
-        else
-          # :note is exposed as :body, but :note is set on error
-          bad_request!(:note) if @note.errors[:note].any?
-          not_found!
+      resource parent_type.pluralize.to_sym, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
+        desc "Get a list of #{noteable_type.to_s.downcase} notes" do
+          success Entities::Note
         end
-      end
+        params do
+          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          optional :order_by, type: String, values: %w[created_at updated_at], default: 'created_at',
+                              desc: 'Return notes ordered by `created_at` or `updated_at` fields.'
+          optional :sort, type: String, values: %w[asc desc], default: 'desc',
+                          desc: 'Return notes sorted in `asc` or `desc` order.'
+          use :pagination
+        end
+        # rubocop: disable CodeReuse/ActiveRecord
+        get ":id/#{noteables_str}/:noteable_id/notes" do
+          noteable = find_noteable(parent_type, params[:id], noteable_type, params[:noteable_id])
 
-      NOTEABLE_TYPES.each do |noteable_type|
-        noteables_str = noteable_type.to_s.underscore.pluralize
-        noteable_id_str = "#{noteable_type.to_s.underscore}_id"
+          # We exclude notes that are cross-references and that cannot be viewed
+          # by the current user. By doing this exclusion at this level and not
+          # at the DB query level (which we cannot in that case), the current
+          # page can have less elements than :per_page even if
+          # there's more than one page.
+          raw_notes = noteable.notes.with_metadata.reorder(order_options_with_tie_breaker)
 
-        # Get a list of project +noteable+ notes
-        #
-        # Parameters:
-        #   id (required) - The ID of a project
-        #   noteable_id (required) - The ID of an issue or snippet
-        # Example Request:
-        #   GET /projects/:id/issues/:noteable_id/notes
-        #   GET /projects/:id/snippets/:noteable_id/notes
-        get ":id/#{noteables_str}/:#{noteable_id_str}/notes" do
-          @noteable = user_project.send(:"#{noteables_str}").find(params[:"#{noteable_id_str}"])
-          present paginate(@noteable.notes), with: Entities::Note
+          # paginate() only works with a relation. This could lead to a
+          # mismatch between the pagination headers info and the actual notes
+          # array returned, but this is really a edge-case.
+          notes = paginate(raw_notes)
+          notes = prepare_notes_for_rendering(notes)
+          notes = notes.select { |note| note.visible_for?(current_user) }
+          present notes, with: Entities::Note
+        end
+        # rubocop: enable CodeReuse/ActiveRecord
+
+        desc "Get a single #{noteable_type.to_s.downcase} note" do
+          success Entities::Note
+        end
+        params do
+          requires :note_id, type: Integer, desc: 'The ID of a note'
+          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+        end
+        get ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
+          noteable = find_noteable(parent_type, params[:id], noteable_type, params[:noteable_id])
+          get_note(noteable, params[:note_id])
         end
 
-        # Get a single +noteable+ note
-        #
-        # Parameters:
-        #   id (required) - The ID of a project
-        #   noteable_id (required) - The ID of an issue or snippet
-        #   note_id (required) - The ID of a note
-        # Example Request:
-        #   GET /projects/:id/issues/:noteable_id/notes/:note_id
-        #   GET /projects/:id/snippets/:noteable_id/notes/:note_id
-        get ":id/#{noteables_str}/:#{noteable_id_str}/notes/:note_id" do
-          @noteable = user_project.send(:"#{noteables_str}").find(params[:"#{noteable_id_str}"])
-          @note = @noteable.notes.find(params[:note_id])
-          present @note, with: Entities::Note
+        desc "Create a new #{noteable_type.to_s.downcase} note" do
+          success Entities::Note
         end
+        params do
+          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          requires :body, type: String, desc: 'The content of a note'
+          optional :created_at, type: String, desc: 'The creation date of the note'
+        end
+        post ":id/#{noteables_str}/:noteable_id/notes" do
+          noteable = find_noteable(parent_type, params[:id], noteable_type, params[:noteable_id])
 
-        # Create a new +noteable+ note
-        #
-        # Parameters:
-        #   id (required) - The ID of a project
-        #   noteable_id (required) - The ID of an issue or snippet
-        #   body (required) - The content of a note
-        # Example Request:
-        #   POST /projects/:id/issues/:noteable_id/notes
-        #   POST /projects/:id/snippets/:noteable_id/notes
-        post ":id/#{noteables_str}/:#{noteable_id_str}/notes" do
-          required_attributes! [:body]
+          opts = {
+            note: params[:body],
+            noteable_type: noteables_str.classify,
+            noteable_id: noteable.id,
+            created_at: params[:created_at]
+          }
 
-          @noteable = user_project.send(:"#{noteables_str}").find(params[:"#{noteable_id_str}"])
-          @note = @noteable.notes.new(note: params[:body])
-          @note.author = current_user
-          @note.project = user_project
+          note = create_note(noteable, opts)
 
-          if @note.save
-            present @note, with: Entities::Note
+          if note.valid?
+            present note, with: Entities.const_get(note.class.name)
           else
-            not_found!
+            bad_request!("Note #{note.errors.messages}")
           end
+        end
+
+        desc "Update an existing #{noteable_type.to_s.downcase} note" do
+          success Entities::Note
+        end
+        params do
+          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          requires :note_id, type: Integer, desc: 'The ID of a note'
+          requires :body, type: String, desc: 'The content of a note'
+        end
+        put ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
+          noteable = find_noteable(parent_type, params[:id], noteable_type, params[:noteable_id])
+
+          update_note(noteable, params[:note_id])
+        end
+
+        desc "Delete a #{noteable_type.to_s.downcase} note" do
+          success Entities::Note
+        end
+        params do
+          requires :noteable_id, type: Integer, desc: 'The ID of the noteable'
+          requires :note_id, type: Integer, desc: 'The ID of a note'
+        end
+        delete ":id/#{noteables_str}/:noteable_id/notes/:note_id" do
+          noteable = find_noteable(parent_type, params[:id], noteable_type, params[:noteable_id])
+
+          delete_note(noteable, params[:note_id])
         end
       end
     end

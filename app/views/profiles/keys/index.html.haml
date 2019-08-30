@@ -1,22 +1,24 @@
-%h3.page-title
-  My SSH keys
-  .pull-right
-    = link_to "Add SSH Key", new_profile_key_path, class: "btn btn-new"
-%p.light
-  SSH keys allow you to establish a secure connection between your computer and GitLab
-  %br
-  Before you can add an SSH key you need to
-  = link_to "generate it", help_ssh_path
-%hr
+- page_title _('SSH Keys')
+- @content_class = "limit-container-width" unless fluid_layout
 
-
-.ui-box
-  .title
-    SSH Keys (#{@keys.count})
-  %ul.well-list#keys-table
-    = render @keys
-    - if @keys.blank?
-      %li
-        %h3.nothing_here_message There are no SSH keys with access to your account.
-
-
+.row.prepend-top-default
+  .col-lg-4.profile-settings-sidebar
+    %h4.prepend-top-0
+      = page_title
+    %p
+      = _('SSH keys allow you to establish a secure connection between your computer and GitLab.')
+  .col-lg-8
+    %h5.prepend-top-0
+      = _('Add an SSH key')
+    %p.profile-settings-content
+      - generate_link_url = help_page_path("ssh/README", anchor: 'generating-a-new-ssh-key-pair')
+      - existing_link_url = help_page_path("ssh/README", anchor: 'locating-an-existing-ssh-key-pair')
+      - generate_link_start = '<a href="%{url}" target="_blank" rel="noopener noreferrer">'.html_safe % { url: generate_link_url }
+      - existing_link_start = '<a href="%{url}" target="_blank" rel="noopener noreferrer">'.html_safe % { url: existing_link_url }
+      = _('To add an SSH key you need to %{generate_link_start}generate one%{link_end} or use an %{existing_link_start}existing key%{link_end}.').html_safe % { generate_link_start: generate_link_start, existing_link_start: existing_link_start, link_end: '</a>'.html_safe }
+    = render 'form'
+    %hr
+    %h5
+      = _('Your SSH keys (%{count})') % { count:@keys.count }
+    .append-bottom-default
+      = render 'key_table'

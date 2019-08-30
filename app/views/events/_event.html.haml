@@ -1,15 +1,15 @@
-- if event.proper?
-  .event-item{class: "#{event.body? ? "event-block" : "event-inline" }"}
-    %span.cgray.pull-right
-      #{time_ago_in_words(event.created_at)} ago.
+- if event.visible_to_user?(current_user)
+  .event-item
+    .event-item-timestamp
+      #{time_ago_with_tooltip(event.created_at)}
 
-    = cache event do
-      = image_tag gravatar_icon(event.author_email), class: "avatar s24", alt:''
-
-      - if event.push?
-        = render "events/event/push", event: event
-      - elsif event.note?
-        = render "events/event/note", event: event
-      - else
-        = render "events/event/common", event: event
-
+    - if event.created_project_action?
+      = render "events/event/created_project", event: event
+    - elsif event.push_action?
+      = render "events/event/push", event: event
+    - elsif event.commented_action?
+      = render "events/event/note", event: event
+    - else
+      = render "events/event/common", event: event
+- elsif @user&.include_private_contributions?
+  = render "events/event/private", event: event

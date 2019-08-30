@@ -1,13 +1,26 @@
-%h3.page-title
-  Issues assigned to me
-  %span.pull-right #{@issues.total_count} issues
+- @hide_top_links = true
+- page_title _("Issues")
+- @breadcrumb_link = issues_dashboard_path(assignee_username: current_user.username)
+= content_for :meta_tags do
+  = auto_discovery_link_tag(:atom, safe_params.merge(rss_url_options).to_h, title: "#{current_user.name} issues")
 
-%p.light
-  For all issues you should visit the project's issues page, or use the search panel to find a specific issue.
-%hr
+= render_dashboard_gold_trial(current_user)
 
-.row
-  .span3
-    = render 'shared/filter', entity: 'issue'
-  .span9
-    = render 'shared/issues'
+.page-title-holder.d-flex.align-items-center
+  %h1.page-title= _('Issues')
+
+  - if current_user
+    .page-title-controls
+      = render 'shared/new_project_item_select', path: 'issues/new', label: "New issue", with_feature_enabled: 'issues', type: :issues
+
+.top-area
+  = render 'shared/issuable/nav', type: :issues, display_count: !@no_filters_set
+  .nav-controls
+    = render 'shared/issuable/feed_buttons'
+
+= render 'shared/issuable/search_bar', type: :issues
+
+- if current_user && @no_filters_set
+  = render 'shared/dashboard/no_filter_selected'
+- else
+  = render 'shared/issues'

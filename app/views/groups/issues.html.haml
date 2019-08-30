@@ -1,15 +1,25 @@
-%h3.page-title
-  Issues assigned to me
-  %span.pull-right #{@issues.total_count} issues
+- @can_bulk_update = can?(current_user, :admin_issue, @group) && @group.feature_available?(:group_bulk_edit)
 
-%p.light
-  Only issues from
-  %strong #{@group.name}
-  group are listed here. To see all issues you should visit #{link_to 'dashboard', issues_dashboard_path} page.
-%hr
+- page_title "Issues"
+= content_for :meta_tags do
+  = auto_discovery_link_tag(:atom, safe_params.merge(rss_url_options).to_h, title: "#{@group.name} issues")
 
-.row
-  .span3
-    = render 'shared/filter', entity: 'issue'
-  .span9
-    = render 'shared/issues'
+- if group_issues_count(state: 'all').zero?
+  = render 'shared/empty_states/issues', project_select_button: true
+- else
+  .top-area
+    = render 'shared/issuable/nav', type: :issues
+    .nav-controls
+      = render 'shared/issuable/feed_buttons'
+
+      - if @can_bulk_update
+        = render_if_exists 'shared/issuable/bulk_update_button', type: :issues
+
+      = render 'shared/new_project_item_select', path: 'issues/new', label: "New issue", type: :issues, with_feature_enabled: 'issues', with_shared: false, include_projects_in_subgroups: true
+
+  = render 'shared/issuable/search_bar', type: :issues
+
+  - if @can_bulk_update
+    = render_if_exists 'shared/issuable/group_bulk_update_sidebar', group: @group, type: :issues
+
+  = render 'shared/issues'

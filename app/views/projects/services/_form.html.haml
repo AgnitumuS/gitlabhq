@@ -1,48 +1,22 @@
-%h3.page-title
-  - if @service.activated?
-    %span.cgreen
-      %i.icon-circle
-  - else
-    %span.cgray
-      %i.icon-circle-blank
-  = @service.title
+.row.prepend-top-default.append-bottom-default
+  .col-lg-3
+    %h4.prepend-top-0
+      = @service.title
+      = boolean_to_icon @service.activated?
 
-%p= @service.description
+    %p= #{@service.description}.
 
-.back-link
-  = link_to project_services_path(@project) do
-    &larr; to services
+    - if @service.respond_to?(:detailed_description)
+      %p= @service.detailed_description
+  .col-lg-9
+    = form_for(@service, as: :service, url: project_service_path(@project, @service.to_param), method: :put, html: { class: 'gl-show-field-errors integration-settings-form js-integration-settings-form', data: { 'can-test' => @service.can_test?, 'test-url' => test_project_service_path(@project, @service) } }) do |form|
+      = render 'shared/service_settings', form: form, subject: @service
+      - if @service.editable?
+        .footer-block.row-content-block
+          = service_save_button(@service)
+          &nbsp;
+          = link_to _('Cancel'), project_settings_integrations_path(@project), class: 'btn btn-cancel'
 
-%hr
-
-= form_for(@service, as: :service, url: project_service_path(@project, @service.to_param), method: :put) do |f|
-  - if @service.errors.any?
-    .alert.alert-error
-      %ul
-        - @service.errors.full_messages.each do |msg|
-          %li= msg
-
-
-  .control-group
-    = f.label :active, "Active", class: "control-label"
-    .controls
-      = f.check_box :active
-
-  - @service.fields.each do |field|
-    - name = field[:name]
-    - type = field[:type]
-    - placeholder = field[:placeholder]
-
-    .control-group
-      = f.label name, class: "control-label"
-      .controls
-        - if type == 'text'
-          = f.text_field name, class: "input-xlarge", placeholder: placeholder
-        - elsif type == 'checkbox'
-          = f.check_box name
-
-  .form-actions
-    = f.submit 'Save', class: 'btn btn-save'
-    &nbsp;
-    - if @service.valid? && @service.activated? && @service.can_test?
-      = link_to 'Test settings', test_project_service_path(@project, @service.to_param), class: 'btn btn-small'
+- if lookup_context.template_exists?('show', "projects/services/#{@service.to_param}", true)
+  %hr
+  = render "projects/services/#{@service.to_param}/show"

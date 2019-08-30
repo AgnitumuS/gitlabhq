@@ -1,188 +1,353 @@
-require 'gitlab/satellite/satellite'
+# frozen_string_literal: true
 
-class Projects::MergeRequestsController < Projects::ApplicationController
-  before_filter :module_enabled
-  before_filter :merge_request, only: [:edit, :update, :show, :commits, :diffs, :automerge, :automerge_check, :ci_status]
-  before_filter :validates_merge_request, only: [:show, :diffs]
-  before_filter :define_show_vars, only: [:show, :diffs]
+class Projects::MergeRequestsController < Projects::MergeRequests::ApplicationController
+  include ToggleSubscriptionAction
+  include IssuableActions
+  include RendersNotes
+  include RendersCommits
+  include ToggleAwardEmoji
+  include IssuableCollections
+  include RecordUserLastActivity
 
-  # Allow read any merge_request
-  before_filter :authorize_read_merge_request!
+  skip_before_action :merge_request, only: [:index, :bulk_update]
+  before_action :whitelist_query_limiting, only: [:assign_related_issues, :update]
+  before_action :authorize_update_issuable!, only: [:close, :edit, :update, :remove_wip, :sort]
+  before_action :authorize_test_reports!, only: [:test_reports]
+  before_action :set_issuables_index, only: [:index]
+  before_action :authenticate_user!, only: [:assign_related_issues]
+  before_action :check_user_can_push_to_source_branch!, only: [:rebase]
 
-  # Allow write(create) merge_request
-  before_filter :authorize_write_merge_request!, only: [:new, :create]
-
-  # Allow modify merge_request
-  before_filter :authorize_modify_merge_request!, only: [:close, :edit, :update, :sort]
+  around_action :allow_gitaly_ref_name_caching, only: [:index, :show, :discussions]
 
   def index
-    @merge_requests = MergeRequestsLoadContext.new(project, current_user, params).execute
-    assignee_id, milestone_id = params[:assignee_id], params[:milestone_id]
-    @assignee = @project.team.find(assignee_id) if assignee_id.present? && !assignee_id.to_i.zero?
-    @milestone = @project.milestones.find(milestone_id) if milestone_id.present? && !milestone_id.to_i.zero?
+    @merge_requests = @issuables
+
+    respond_to do |format|
+      format.html
+      format.json do
+        render json: {
+          html: view_to_html_string("projects/merge_requests/_merge_requests")
+        }
+      end
+    end
   end
 
   def show
-    respond_to do |format|
-      format.html
-      format.js
+    close_merge_request_if_no_source_project
+    @merge_request.check_mergeability
 
-      format.diff { render text: @merge_request.to_diff(current_user) }
-      format.patch { render text: @merge_request.to_patch(current_user) }
+    respond_to do |format|
+      format.html do
+        # use next to appease Rubocop
+        next render('invalid') if target_branch_missing?
+
+        # Build a note object for comment form
+        @note = @project.notes.new(noteable: @merge_request)
+
+        @noteable = @merge_request
+        @commits_count = @merge_request.commits_count
+        @issuable_sidebar = serializer.represent(@merge_request, serializer: 'sidebar')
+        @current_user_data = UserSerializer.new(project: @project).represent(current_user, {}, MergeRequestUserEntity).to_json
+
+        set_pipeline_variables
+
+        render
+      end
+
+      format.json do
+        Gitlab::PollingInterval.set_header(response, interval: 10_000)
+
+        render json: serializer.represent(@merge_request, serializer: params[:serializer])
+      end
+
+      format.patch do
+        break render_404 unless @merge_request.diff_refs
+
+        send_git_patch @project.repository, @merge_request.diff_refs
+      end
+
+      format.diff do
+        break render_404 unless @merge_request.diff_refs
+
+        send_git_diff @project.repository, @merge_request.diff_refs
+      end
     end
   end
 
-  def diffs
-    @commit = @merge_request.last_commit
+  def commits
+    # Get commits from repository
+    # or from cache if already merged
+    @commits =
+      set_commits_for_rendering(@merge_request.commits.with_pipeline_status)
 
-    @comments_allowed = @reply_allowed = true
-    @comments_target = {noteable_type: 'MergeRequest',
-                        noteable_id: @merge_request.id}
-    @line_notes = @merge_request.notes.where("line_code is not null")
+    render json: { html: view_to_html_string('projects/merge_requests/_commits') }
   end
 
-  def new
-    @merge_request = MergeRequest.new(params[:merge_request])
-    @merge_request.source_project = @project unless @merge_request.source_project
-    @merge_request.target_project = @project unless @merge_request.target_project
-    @target_branches = @merge_request.target_project.nil? ? [] : @merge_request.target_project.repository.branch_names
-    @source_project = @merge_request.source_project
-    @merge_request
+  def pipelines
+    set_pipeline_variables
+    @pipelines = @pipelines.page(params[:page]).per(30)
+
+    Gitlab::PollingInterval.set_header(response, interval: 10_000)
+
+    render json: {
+      pipelines: PipelineSerializer
+        .new(project: @project, current_user: @current_user)
+        .with_pagination(request, response)
+        .represent(@pipelines),
+      count: {
+        all: @pipelines.count
+      }
+    }
+  end
+
+  def test_reports
+    reports_response(@merge_request.compare_test_reports)
   end
 
   def edit
-    @source_project = @merge_request.source_project
-    @target_project = @merge_request.target_project
-    @target_branches = @merge_request.target_project.repository.branch_names
-  end
-
-  def create
-    @merge_request = MergeRequest.new(params[:merge_request])
-    @merge_request.author = current_user
-    @target_branches ||= []
-    if @merge_request.save
-      @merge_request.reload_code
-      redirect_to [@merge_request.target_project, @merge_request], notice: 'Merge request was successfully created.'
-    else
-      @source_project = @merge_request.source_project
-      @target_project = @merge_request.target_project
-      render action: "new"
-    end
+    define_edit_vars
   end
 
   def update
-    if @merge_request.update_attributes(params[:merge_request].merge(author_id_of_changes: current_user.id))
-      @merge_request.reload_code
-      @merge_request.mark_as_unchecked
-      redirect_to [@merge_request.target_project, @merge_request], notice: 'Merge request was successfully updated.'
+    @merge_request = ::MergeRequests::UpdateService.new(project, current_user, merge_request_params).execute(@merge_request)
+
+    respond_to do |format|
+      format.html do
+        if @merge_request.errors.present?
+          define_edit_vars
+
+          render :edit
+        else
+          redirect_to project_merge_request_path(@merge_request.target_project, @merge_request)
+        end
+      end
+
+      format.json do
+        if merge_request.errors.present?
+          render json: @merge_request.errors, status: :bad_request
+        else
+          render json: serializer.represent(@merge_request, serializer: 'basic')
+        end
+      end
+    end
+  rescue ActiveRecord::StaleObjectError
+    define_edit_vars if request.format.html?
+
+    render_conflict_response
+  end
+
+  def remove_wip
+    @merge_request = ::MergeRequests::UpdateService
+      .new(project, current_user, wip_event: 'unwip')
+      .execute(@merge_request)
+
+    render json: serialize_widget(@merge_request)
+  end
+
+  def commit_change_content
+    render partial: 'projects/merge_requests/widget/commit_change_content', layout: false
+  end
+
+  def cancel_auto_merge
+    unless @merge_request.can_cancel_auto_merge?(current_user)
+      return access_denied!
+    end
+
+    AutoMergeService.new(project, current_user).cancel(@merge_request)
+
+    render json: serialize_widget(@merge_request)
+  end
+
+  def merge
+    access_check_result = merge_access_check
+
+    return access_check_result if access_check_result
+
+    status = merge!
+
+    if @merge_request.merge_error
+      render json: { status: status, merge_error: @merge_request.merge_error }
     else
-      render "edit"
+      render json: { status: status }
     end
   end
 
-  def automerge_check
-    if @merge_request.unchecked?
-      @merge_request.check_if_can_be_merged
-    end
-    render json: {merge_status: @merge_request.merge_status_name}
-  rescue Gitlab::SatelliteNotExistError
-    render json: {merge_status: :no_satellite}
-  end
+  def assign_related_issues
+    result = ::MergeRequests::AssignIssuesService.new(project, current_user, merge_request: @merge_request).execute
 
-  def automerge
-    return access_denied! unless allowed_to_merge?
-
-    if @merge_request.opened? && @merge_request.can_be_merged?
-      @merge_request.should_remove_source_branch = params[:should_remove_source_branch]
-      @merge_request.automerge!(current_user)
-      @status = true
+    case result[:count]
+    when 0
+      flash[:error] = "Failed to assign you issues related to the merge request"
+    when 1
+      flash[:notice] = "1 issue has been assigned to you"
     else
-      @status = false
+      flash[:notice] = "#{result[:count]} issues have been assigned to you"
     end
+
+    redirect_to(merge_request_path(@merge_request))
   end
 
-  def branch_from
-    #This is always source
-    @source_project = @merge_request.nil? ? @project : @merge_request.source_project
-    @commit = @repository.commit(params[:ref]) if params[:ref].present?
+  def pipeline_status
+    render json: PipelineSerializer
+      .new(project: @project, current_user: @current_user)
+      .represent_status(head_pipeline)
   end
 
-  def branch_to
-    @target_project = selected_target_project
-    @commit = @target_project.repository.commit(params[:ref]) if params[:ref].present?
+  def ci_environments_status
+    environments = if ci_environments_status_on_merge_result?
+                     EnvironmentStatus.after_merge_request(@merge_request, current_user)
+                   else
+                     EnvironmentStatus.for_merge_request(@merge_request, current_user)
+                   end
+
+    render json: EnvironmentStatusSerializer.new(current_user: current_user).represent(environments)
   end
 
-  def update_branches
-    @target_project = selected_target_project
-    @target_branches = @target_project.repository.branch_names
-    @target_branches
+  def rebase
+    @merge_request.rebase_async(current_user.id)
+
+    head :ok
   end
 
-  def ci_status
-    status = project.gitlab_ci_service.commit_status(merge_request.last_commit.sha)
-    response = {status: status}
+  def discussions
+    merge_request.preload_discussions_diff_highlight
 
-    render json: response
+    super
   end
 
   protected
 
-  def selected_target_project
-    ((@project.id.to_s == params[:target_project_id]) || @project.forked_project_link.nil?) ? @project : @project.forked_project_link.forked_from_project
+  alias_method :subscribable_resource, :merge_request
+  alias_method :issuable, :merge_request
+  alias_method :awardable, :merge_request
+
+  def sorting_field
+    MergeRequest::SORTING_PREFERENCE_FIELD
   end
 
-  def merge_request
-    @merge_request ||= @project.merge_requests.find_by_iid!(params[:id])
+  def merge_params
+    params.permit(merge_params_attributes)
   end
 
-  def authorize_modify_merge_request!
-    return render_404 unless can?(current_user, :modify_merge_request, @merge_request)
+  def merge_params_attributes
+    [:should_remove_source_branch, :commit_message, :squash_commit_message, :squash, :auto_merge_strategy]
   end
 
-  def authorize_admin_merge_request!
-    return render_404 unless can?(current_user, :admin_merge_request, @merge_request)
+  def auto_merge_requested?
+    # Support params[:merge_when_pipeline_succeeds] during the transition period
+    params[:auto_merge_strategy].present? || params[:merge_when_pipeline_succeeds].present?
   end
 
-  def module_enabled
-    return render_404 unless @project.merge_requests_enabled
+  private
+
+  def head_pipeline
+    strong_memoize(:head_pipeline) do
+      pipeline = @merge_request.head_pipeline
+      pipeline if can?(current_user, :read_pipeline, pipeline)
+    end
   end
 
-  def validates_merge_request
-    # Show git not found page if target branch doesn't exist
-    return invalid_mr unless @merge_request.target_project.repository.branch_names.include?(@merge_request.target_branch)
-
-    # Show git not found page if source branch doesn't exist
-    # and there is no saved commits between source & target branch
-    return invalid_mr if !@merge_request.source_project.repository.branch_names.include?(@merge_request.source_branch) && @merge_request.commits.blank?
+  def ci_environments_status_on_merge_result?
+    params[:environment_target] == 'merge_commit'
   end
 
-  def define_show_vars
-    # Build a note object for comment form
-    @note = @project.notes.new(noteable: @merge_request)
-
-    # Get commits from repository
-    # or from cache if already merged
-    @commits = @merge_request.commits
-
-    @allowed_to_merge = allowed_to_merge?
-    @show_merge_controls = @merge_request.opened? && @commits.any? && @allowed_to_merge
-
-    @target_type = :merge_request
-    @target_id = @merge_request.id
+  def target_branch_missing?
+    @merge_request.has_no_commits? && !@merge_request.target_branch_exists?
   end
 
-  def allowed_to_merge?
-    action = if project.protected_branch?(@merge_request.target_branch)
-               :push_code_to_protected_branches
-             else
-               :push_code
-             end
+  def merge!
+    # Disable the CI check if auto_merge_strategy is specified since we have
+    # to wait until CI completes to know
+    unless @merge_request.mergeable?(skip_ci_check: auto_merge_requested?)
+      return :failed
+    end
 
-    can?(current_user, action, @project)
+    merge_service = ::MergeRequests::MergeService.new(@project, current_user, merge_params)
+
+    unless merge_service.hooks_validation_pass?(@merge_request)
+      return :hook_validation_error
+    end
+
+    return :sha_mismatch if params[:sha] != @merge_request.diff_head_sha
+
+    @merge_request.update(merge_error: nil, squash: merge_params.fetch(:squash, false))
+
+    if auto_merge_requested?
+      if merge_request.auto_merge_enabled?
+        # TODO: We should have a dedicated endpoint for updating merge params.
+        #       See https://gitlab.com/gitlab-org/gitlab-ce/issues/63130.
+        AutoMergeService.new(project, current_user, merge_params).update(merge_request)
+      else
+        AutoMergeService.new(project, current_user, merge_params)
+          .execute(merge_request,
+                   params[:auto_merge_strategy] || AutoMergeService::STRATEGY_MERGE_WHEN_PIPELINE_SUCCEEDS)
+      end
+    else
+      @merge_request.merge_async(current_user.id, merge_params)
+
+      :success
+    end
   end
 
-  def invalid_mr
-    # Render special view for MR with removed source or target branch
-    render 'invalid'
+  def serialize_widget(merge_request)
+    serializer.represent(merge_request, serializer: 'widget')
+  end
+
+  def serializer
+    MergeRequestSerializer.new(current_user: current_user, project: merge_request.project)
+  end
+
+  def define_edit_vars
+    @source_project = @merge_request.source_project
+    @target_project = @merge_request.target_project
+    @target_branches = @merge_request.target_project.repository.branch_names
+    @noteable = @merge_request
+
+    # FIXME: We have to assign a presenter to another instance variable
+    # due to class_name checks being made with issuable classes
+    @mr_presenter = @merge_request.present(current_user: current_user)
+  end
+
+  def finder_type
+    MergeRequestsFinder
+  end
+
+  def check_user_can_push_to_source_branch!
+    return access_denied! unless @merge_request.source_branch_exists?
+
+    access_check = ::Gitlab::UserAccess
+      .new(current_user, project: @merge_request.source_project)
+      .can_push_to_branch?(@merge_request.source_branch)
+
+    access_denied! unless access_check
+  end
+
+  def merge_access_check
+    access_denied! unless @merge_request.can_be_merged_by?(current_user)
+  end
+
+  def whitelist_query_limiting
+    # Also see https://gitlab.com/gitlab-org/gitlab-ce/issues/42441
+    Gitlab::QueryLimiting.whitelist('https://gitlab.com/gitlab-org/gitlab-ce/issues/42438')
+  end
+
+  def reports_response(report_comparison)
+    case report_comparison[:status]
+    when :parsing
+      ::Gitlab::PollingInterval.set_header(response, interval: 3000)
+
+      render json: '', status: :no_content
+    when :parsed
+      render json: report_comparison[:data].to_json, status: :ok
+    when :error
+      render json: { status_reason: report_comparison[:status_reason] }, status: :bad_request
+    else
+      render json: { status_reason: 'Unknown error' }, status: :internal_server_error
+    end
+  end
+
+  def authorize_test_reports!
+    # MergeRequest#actual_head_pipeline is the pipeline accessed in MergeRequest#compare_reports.
+    return render_404 unless can?(current_user, :read_build, merge_request.actual_head_pipeline)
   end
 end

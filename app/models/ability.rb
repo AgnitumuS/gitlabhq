@@ -1,182 +1,91 @@
+# frozen_string_literal: true
+
+require_dependency 'declarative_policy'
+
 class Ability
   class << self
-    def allowed(user, subject)
-      return [] unless user.kind_of?(User)
-
-      case subject.class.name
-      when "Project" then project_abilities(user, subject)
-      when "Issue" then issue_abilities(user, subject)
-      when "Note" then note_abilities(user, subject)
-      when "ProjectSnippet" then project_snippet_abilities(user, subject)
-      when "PersonalSnippet" then personal_snippet_abilities(user, subject)
-      when "MergeRequest" then merge_request_abilities(user, subject)
-      when "Group" then group_abilities(user, subject)
-      when "Namespace" then namespace_abilities(user, subject)
-      else []
-      end.concat(global_abilities(user))
+    # Given a list of users and a project this method returns the users that can
+    # read the given project.
+    def users_that_can_read_project(users, project)
+      DeclarativePolicy.subject_scope do
+        users.select { |u| allowed?(u, :read_project, project) }
+      end
     end
 
-    def global_abilities(user)
-      rules = []
-      rules << :create_group if user.can_create_group
-      rules
+    # Given a list of users and a group this method returns the users that can
+    # read the given group.
+    def users_that_can_read_group(users, group)
+      DeclarativePolicy.subject_scope do
+        users.select { |u| allowed?(u, :read_group, group) }
+      end
     end
 
-    def project_abilities(user, project)
-      rules = []
+    # Given a list of users and a snippet this method returns the users that can
+    # read the given snippet.
+    def users_that_can_read_personal_snippet(users, snippet)
+      DeclarativePolicy.subject_scope do
+        users.select { |u| allowed?(u, :read_personal_snippet, snippet) }
+      end
+    end
 
-      team = project.team
+    # Returns an Array of Issues that can be read by the given user.
+    #
+    # issues - The issues to reduce down to those readable by the user.
+    # user - The User for which to check the issues
+    # filters - A hash of abilities and filters to apply if the user lacks this
+    #           ability
+    def issues_readable_by_user(issues, user = nil, filters: {})
+      issues = apply_filters_if_needed(issues, user, filters)
 
-      # Rules based on role in project
-      if team.masters.include?(user)
-        rules << project_master_rules
+      DeclarativePolicy.user_scope do
+        issues.select { |issue| issue.visible_to_user?(user) }
+      end
+    end
 
-      elsif team.developers.include?(user)
-        rules << project_dev_rules
+    # Returns an Array of MergeRequests that can be read by the given user.
+    #
+    # merge_requests - MRs out of which to collect mr's readable by the user.
+    # user - The User for which to check the merge_requests
+    # filters - A hash of abilities and filters to apply if the user lacks this
+    #           ability
+    def merge_requests_readable_by_user(merge_requests, user = nil, filters: {})
+      merge_requests = apply_filters_if_needed(merge_requests, user, filters)
 
-      elsif team.reporters.include?(user)
-        rules << project_report_rules
+      DeclarativePolicy.user_scope do
+        merge_requests.select { |mr| allowed?(user, :read_merge_request, mr) }
+      end
+    end
 
-      elsif team.guests.include?(user)
-        rules << project_guest_rules
+    def allowed?(user, action, subject = :global, opts = {})
+      if subject.is_a?(Hash)
+        opts, subject = subject, :global
       end
 
-      if project.public?
-        rules << public_project_rules
+      policy = policy_for(user, subject)
+
+      case opts[:scope]
+      when :user
+        DeclarativePolicy.user_scope { policy.can?(action) }
+      when :subject
+        DeclarativePolicy.subject_scope { policy.can?(action) }
+      else
+        policy.can?(action)
+      end
+    end
+
+    def policy_for(user, subject = :global)
+      cache = Gitlab::SafeRequestStore.active? ? Gitlab::SafeRequestStore : {}
+      DeclarativePolicy.policy_for(user, subject, cache: cache)
+    end
+
+    private
+
+    def apply_filters_if_needed(elements, user, filters)
+      filters.each do |ability, filter|
+        elements = filter.call(elements) unless allowed?(user, ability)
       end
 
-      if project.owner == user || user.admin?
-        rules << project_admin_rules
-      end
-
-      if project.group && project.group.owners.include?(user)
-        rules << project_admin_rules
-      end
-
-      rules.flatten
-    end
-
-    def public_project_rules
-      [
-        :download_code,
-        :fork_project,
-        :read_project,
-        :read_wiki,
-        :read_issue,
-        :read_milestone,
-        :read_project_snippet,
-        :read_team_member,
-        :read_merge_request,
-        :read_note,
-        :write_issue,
-        :write_note
-      ]
-    end
-
-    def project_guest_rules
-      [
-        :read_project,
-        :read_wiki,
-        :read_issue,
-        :read_milestone,
-        :read_project_snippet,
-        :read_team_member,
-        :read_merge_request,
-        :read_note,
-        :write_project,
-        :write_issue,
-        :write_note
-      ]
-    end
-
-    def project_report_rules
-      project_guest_rules + [
-        :download_code,
-        :fork_project,
-        :write_project_snippet
-      ]
-    end
-
-    def project_dev_rules
-      project_report_rules + [
-        :write_merge_request,
-        :write_wiki,
-        :push_code
-      ]
-    end
-
-    def project_master_rules
-      project_dev_rules + [
-        :push_code_to_protected_branches,
-        :modify_issue,
-        :modify_project_snippet,
-        :modify_merge_request,
-        :admin_issue,
-        :admin_milestone,
-        :admin_project_snippet,
-        :admin_team_member,
-        :admin_merge_request,
-        :admin_note,
-        :admin_wiki,
-        :admin_project
-      ]
-    end
-
-    def project_admin_rules
-      project_master_rules + [
-        :change_namespace,
-        :change_public_mode,
-        :rename_project,
-        :remove_project
-      ]
-    end
-
-    def group_abilities user, group
-      rules = []
-
-      # Only group owner and administrators can manage group
-      if group.owners.include?(user) || user.admin?
-        rules << [
-          :manage_group,
-          :manage_namespace
-        ]
-      end
-
-      rules.flatten
-    end
-
-    def namespace_abilities user, namespace
-      rules = []
-
-      # Only namespace owner and administrators can manage it
-      if namespace.owner == user || user.admin?
-        rules << [
-          :manage_namespace
-        ]
-      end
-
-      rules.flatten
-    end
-
-    [:issue, :note, :project_snippet, :personal_snippet, :merge_request].each do |name|
-      define_method "#{name}_abilities" do |user, subject|
-        if subject.author == user
-          [
-            :"read_#{name}",
-            :"write_#{name}",
-            :"modify_#{name}",
-            :"admin_#{name}"
-          ]
-        elsif subject.respond_to?(:assignee) && subject.assignee == user
-          [
-            :"read_#{name}",
-            :"write_#{name}",
-            :"modify_#{name}",
-          ]
-        else
-          subject.respond_to?(:project) ? project_abilities(user, subject.project) : []
-        end
-      end
+      elements
     end
   end
 end

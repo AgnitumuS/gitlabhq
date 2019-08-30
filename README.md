@@ -1,169 +1,123 @@
-## GitLab: self hosted Git management software
+# GitLab
 
-![logo](https://raw.github.com/gitlabhq/gitlabhq/master/public/gitlab_logo.png)
+## Canonical source
 
-![animated-screenshots](https://gist.github.com/fnkr/2f9badd56bfe0ed04ee7/raw/4f48806fbae97f556c2f78d8c2d299c04500cb0d/compiled.gif)
+The canonical source of GitLab Community Edition is [hosted on GitLab.com](https://gitlab.com/gitlab-org/gitlab-ce/).
 
-### GitLab allows you to
- * keep your code secure on your own server
- * manage repositories, users and access permissions
- * communicate through issues, line-comments and wiki pages
- * perform code review with merge requests
+The source of GitLab Enterprise Edition is [hosted on GitLab.com](https://gitlab.com/gitlab-org/gitlab-ee).
 
-### GitLab is
+## Free trial
 
-* powered by Ruby on Rails
-* completely free and open source (MIT license)
-* used by more than 25.000 organizations to keep their code secure
+You can request a free trial of GitLab Ultimate [on our website](https://about.gitlab.com/free-trial/).
 
-### Code status
+## Open source software to collaborate on code
 
-* [![build status](http://ci.gitlab.org/projects/1/status.png?ref=master)](http://ci.gitlab.org/projects/1?ref=master) on ci.gitlab.org (master branch)
+To see how GitLab looks please see the [features page on our website](https://about.gitlab.com/features/).
 
-* [![build status](https://secure.travis-ci.org/gitlabhq/gitlabhq.png)](https://travis-ci.org/gitlabhq/gitlabhq) on travis-ci.org (master branch)
+- Manage Git repositories with fine grained access controls that keep your code secure
+- Perform code reviews and enhance collaboration with merge requests
+- Complete continuous integration (CI) and continuous deployment/delivery (CD) pipelines to build, test, and deploy your applications
+- Each project can also have an issue tracker, issue board, and a wiki
+- Used by more than 100,000 organizations, GitLab is the most popular solution to manage Git repositories on-premises
+- Completely free and open source (MIT Expat license)
 
-* [![Code Climate](https://codeclimate.com/github/gitlabhq/gitlabhq.png)](https://codeclimate.com/github/gitlabhq/gitlabhq)
+## Editions
 
-* [![Dependency Status](https://gemnasium.com/gitlabhq/gitlabhq.png)](https://gemnasium.com/gitlabhq/gitlabhq) this button can be yellow (small updates are available) but must not be red (a security fix or an important update is available), gems are updated in major releases of GitLab.
+There are two editions of GitLab:
 
-* [![Coverage Status](https://coveralls.io/repos/gitlabhq/gitlabhq/badge.png?branch=master)](https://coveralls.io/r/gitlabhq/gitlabhq)
+- GitLab Community Edition (CE) is available freely under the MIT Expat license.
+- GitLab Enterprise Edition (EE) includes [extra features](https://about.gitlab.com/pricing/#compare-options) that are more useful for organizations with more than 100 users. To use EE and get official support please [become a subscriber](https://about.gitlab.com/pricing/).
 
-### Resources
+## Licensing
 
-* GitLab.org community site: [Homepage](http://gitlab.org) | [Screenshots](http://gitlab.org/screenshots/) | [Blog](http://blog.gitlab.org/) | [Demo](http://demo.gitlabhq.com/users/sign_in)
+See the [LICENSE](LICENSE) file for licensing information as it pertains to
+files in this repository.
 
-* GitLab.com commercial services: [Homepage](http://www.gitlab.com/) | [Subscription](http://www.gitlab.com/subscription/) | [Consultancy](http://www.gitlab.com/consultancy/) | [GitLab Cloud](http://www.gitlab.com/cloud/) | [Blog](http://blog.gitlab.com/)
+## Hiring
 
-* GitLab CI: [Readme](https://github.com/gitlabhq/gitlab-ci/blob/master/README.md) of the GitLab open-source continuous integration server
+We're hiring developers, support people, and production engineers all the time, please see our [jobs page](https://about.gitlab.com/jobs/).
 
-### Requirements
+## Website
 
-* Ubuntu/Debian**
-* ruby 1.9.3
-* MySQL or PostgreSQL
-* git
-* gitlab-shell
-* redis
+On [about.gitlab.com](https://about.gitlab.com/) you can find more information about:
 
-** More details are in the [requirements doc](doc/install/requirements.md)
+- [Subscriptions](https://about.gitlab.com/pricing/)
+- [Consultancy](https://about.gitlab.com/consultancy/)
+- [Community](https://about.gitlab.com/community/)
+- [Hosted GitLab.com](https://about.gitlab.com/gitlab-com/) use GitLab as a free service
+- [GitLab Enterprise Edition](https://about.gitlab.com/features/#enterprise) with additional features aimed at larger organizations.
+- [GitLab CI](https://about.gitlab.com/gitlab-ci/) a continuous integration (CI) server that is easy to integrate with GitLab.
 
-### Installation
+## Requirements
 
-#### Official production installation
+Please see the [requirements documentation](doc/install/requirements.md) for system requirements and more information about the supported operating systems.
 
-* [Installation guide for a production server](doc/install/installation.md)
+## Installation
 
+The recommended way to install GitLab is with the [Omnibus packages](https://about.gitlab.com/downloads/) on our package server.
+Compared to an installation from source, this is faster and less error prone.
+Just select your operating system, download the respective package (Debian or RPM) and install it using the system's package manager.
 
-#### Official development installation
+There are various other options to install GitLab, please refer to the [installation page on the GitLab website](https://about.gitlab.com/installation/) for more information.
 
-If you want to contribute, please first read our [Contributing Guidelines](https://github.com/gitlabhq/gitlabhq/blob/master/CONTRIBUTING.md) and then we suggest you to use the Vagrant virtual machine project to get an environment working with all dependencies.
+## Contributing
 
-* [Vagrant virtual machine for development](https://github.com/gitlabhq/gitlab-vagrant-vm)
+GitLab is an open source project and we are very happy to accept community contributions. Please refer to [Contributing to GitLab page](https://about.gitlab.com/contributing/) for more details.
 
+## Install a development environment
 
-#### Unofficial production installations
+To work on GitLab itself, we recommend setting up your development environment with [the GitLab Development Kit](https://gitlab.com/gitlab-org/gitlab-development-kit).
+If you do not use the GitLab Development Kit you need to install and setup all the dependencies yourself, this is a lot of work and error prone.
+One small thing you also have to do when installing it yourself is to copy the example development unicorn configuration file:
 
-* [GitLab recipes](https://github.com/gitlabhq/gitlab-recipes) repository with unofficial guides for using GitLab with different software (operating systems, webservers, etc.) than the official version.
+    cp config/unicorn.rb.example.development config/unicorn.rb
 
-* [Installation guides](https://github.com/gitlabhq/gitlab-public-wiki/wiki/Unofficial-Installation-Guides) public wiki with unofficial guides to install GitLab on different operating systems.
+Instructions on how to start GitLab and how to run the tests can be found in the [getting started section of the GitLab Development Kit](https://gitlab.com/gitlab-org/gitlab-development-kit#getting-started).
 
-* [BitNami one-click installers](http://bitnami.com/stack/gitlab)
+## Software stack
 
-* [TurnKey Linux virtual appliance](http://www.turnkeylinux.org/gitlab)
+GitLab is a Ruby on Rails application that runs on the following software:
 
+- Ubuntu/Debian/CentOS/RHEL/OpenSUSE
+- Ruby (MRI) 2.6.3
+- Git 2.8.4+
+- Redis 2.8+
+- PostgreSQL (preferred) or MySQL
 
-### New versions and upgrading
+For more information please see the [architecture documentation](https://docs.gitlab.com/ce/development/architecture.html).
 
-Since 2011 GitLab is released on the 22nd of every month. Every new release includes an upgrade guide.
+## UX design
 
-* [Upgrade guides](doc/update)
+Please adhere to the [UX Guide](doc/development/ux_guide/index.md) when creating designs and implementing code.
 
-* [Changelog](CHANGELOG)
+## Third-party applications
 
-* Features that will be in the next releases are listed on [the feedback and suggestions forum](http://feedback.gitlab.com/forums/176466-general) with the status ["started"](http://feedback.gitlab.com/forums/176466-general/status/796456) and [completed](http://feedback.gitlab.com/forums/176466-general/status/796457).
+There are a lot of [third-party applications integrating with GitLab](https://about.gitlab.com/applications/). These include GUI Git clients, mobile applications and API wrappers for various languages.
 
+## GitLab release cycle
 
-### Run in production mode
+For more information about the release process see the [release documentation](https://gitlab.com/gitlab-org/release-tools/blob/master/README.md).
 
-The Installation guide contains instructions on how to download an init script and run it automatically on boot. You can also start the init script manually:
+## Upgrading
 
-    sudo service gitlab start
+For upgrading information please see our [update page](https://about.gitlab.com/update/).
 
-or by directly calling the script
+## Documentation
 
-     sudo /etc/init.d/gitlab start
+All documentation can be found on <https://docs.gitlab.com>.
 
-### Run in development mode
+## Getting help
 
-Start it with [Foreman](https://github.com/ddollar/foreman)
+Please see [Getting help for GitLab](https://about.gitlab.com/getting-help/) on our website for the many options to get help.
 
-    bundle exec foreman start -p 3000
+## Why?
 
-or start each component separately
+[Read here](https://about.gitlab.com/why/)
 
-    bundle exec rails s
-    bundle exec rake sidekiq:start
+## Is it any good?
 
-### Run the tests
+[Yes](https://news.ycombinator.com/item?id=3067434)
 
-* Seed the database
+## Is it awesome?
 
-        bundle exec rake db:setup RAILS_ENV=test
-        bundle exec rake db:seed_fu RAILS_ENV=test
-
-* Run all tests
-
-        bundle exec rake gitlab:test
-
-* [RSpec](http://rspec.info/) unit and functional tests
-
-        All RSpec tests: bundle exec rake spec
-
-        Single RSpec file: bundle exec rspec spec/controllers/commit_controller_spec.rb
-
-* [Spinach](https://github.com/codegram/spinach) integration tests
-
-        All Spinach tests: bundle exec rake spinach
-
-        Single Spinach test: bundle exec spinach features/project/issues/milestones.feature
-
-
-### GitLab interfaces
-
-* [GitLab API](doc/api/README.md)
-
-* [Rake tasks](doc/raketasks)
-
-* [Directory structure](doc/install/structure.md)
-
-* [Databases](doc/install/databases.md)
-
-
-### Getting help
-
-* [Maintenance policy](MAINTENANCE.md) specifies what versions are supported.
-
-* [Troubleshooting guide](https://github.com/gitlabhq/gitlab-public-wiki/wiki/Trouble-Shooting-Guide) contains solutions to common problems.
-
-* [Mailing list](https://groups.google.com/forum/#!forum/gitlabhq) and [Stack Overflow](http://stackoverflow.com/questions/tagged/gitlab) are the best places to ask questions. For example you can use it if you have questions about: permission denied errors, invisible repos, can't clone/pull/push or with web hooks that don't fire. Please search for similar issues before posting your own, there's a good chance somebody else had the same issue you have now and has resolved it. There are a lot of helpful GitLab users there who may be able to help you quickly. If your particular issue turns out to be a bug, it will find its way from there to a fix.
-
-* [Unofficial #gitlab IRC on Freenode](http://www.freenode.net/) is another way to get in touch with other GitLab users who may be able to help you.
-
-* [Feedback and suggestions forum](http://feedback.gitlab.com) is the place to propose and discuss new features for GitLab.
-
-* [Contributing guide](https://github.com/gitlabhq/gitlabhq/blob/master/CONTRIBUTING.md) describes how to submit pull requests and issues. Pull requests and issues not in line with the guidelines in this document will be closed.
-
-* [Support subscription](http://www.gitlab.com/subscription/) connects you to the knowledge of GitLab experts that will resolve your issues and answer your questions.
-
-* [Consultancy](http://www.gitlab.com/consultancy/) allows you hire GitLab experts for installations, upgrades and customizations.
-
-
-### Getting in touch
-
-* [Core team](https://github.com/gitlabhq?tab=members)
-
-* [Contributors](https://github.com/gitlabhq/gitlabhq/graphs/contributors)
-
-* [Leader](https://github.com/randx)
-
-* [Contact page](http://gitlab.org/contact/)
+[These people](https://twitter.com/gitlab/likes) seem to like it.

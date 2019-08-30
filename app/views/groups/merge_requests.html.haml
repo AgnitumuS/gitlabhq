@@ -1,14 +1,22 @@
-%h3.page-title
-  Merge Requests
-  %span.pull-right #{@merge_requests.total_count} merge requests
+- @can_bulk_update = can?(current_user, :admin_merge_request, @group) && @group.feature_available?(:group_bulk_edit)
 
-%p.light
-  Authored or assigned to you from
-  %strong #{@group.name}
-  group. To see all merge requests you should visit #{link_to 'dashboard', merge_requests_dashboard_path} page.
-%hr
-.row
-  .span3
-    = render 'shared/filter', entity: 'merge_request'
-  .span9
-    = render 'shared/merge_requests'
+- page_title "Merge Requests"
+
+- if group_merge_requests_count(state: 'all').zero?
+  = render 'shared/empty_states/merge_requests', project_select_button: true
+- else
+  .top-area
+    = render 'shared/issuable/nav', type: :merge_requests
+    - if current_user
+      .nav-controls
+        - if @can_bulk_update
+          = render_if_exists 'shared/issuable/bulk_update_button', type: :merge_requests
+
+        = render 'shared/new_project_item_select', path: 'merge_requests/new', label: "New merge request", type: :merge_requests, with_feature_enabled: 'merge_requests', with_shared: false, include_projects_in_subgroups: true
+
+  = render 'shared/issuable/search_bar', type: :merge_requests
+
+  - if @can_bulk_update
+    = render_if_exists 'shared/issuable/group_bulk_update_sidebar', group: @group, type: :merge_requests
+
+  = render 'shared/merge_requests'

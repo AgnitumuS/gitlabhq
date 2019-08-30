@@ -1,26 +1,28 @@
-class Profiles::NotificationsController < ApplicationController
-  layout 'profile'
+# frozen_string_literal: true
 
+class Profiles::NotificationsController < Profiles::ApplicationController
+  # rubocop: disable CodeReuse/ActiveRecord
   def show
-    @notification = current_user.notification
-    @users_projects = current_user.users_projects
-    @users_groups = current_user.users_groups
+    @user                        = current_user
+    @group_notifications         = current_user.notification_settings.for_groups.order(:id)
+    @project_notifications       = current_user.notification_settings.for_projects.order(:id)
+    @global_notification_setting = current_user.global_notification_setting
   end
+  # rubocop: enable CodeReuse/ActiveRecord
 
   def update
-    type = params[:notification_type]
+    result = Users::UpdateService.new(current_user, user_params.merge(user: current_user)).execute
 
-    @saved = if type == 'global'
-               current_user.notification_level = params[:notification_level]
-               current_user.save
-             elsif type == 'group'
-               users_group = current_user.users_groups.find(params[:notification_id])
-               users_group.notification_level = params[:notification_level]
-               users_group.save
-             else
-               users_project = current_user.users_projects.find(params[:notification_id])
-               users_project.notification_level = params[:notification_level]
-               users_project.save
-             end
+    if result[:status] == :success
+      flash[:notice] = _("Notification settings saved")
+    else
+      flash[:alert] = _("Failed to save new settings")
+    end
+
+    redirect_back_or_default(default: profile_notifications_path)
+  end
+
+  def user_params
+    params.require(:user).permit(:notification_email, :notified_of_own_activity)
   end
 end

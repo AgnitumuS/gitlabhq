@@ -1,74 +1,64 @@
-class DashboardController < ApplicationController
+# frozen_string_literal: true
+
+class DashboardController < Dashboard::ApplicationController
+  include IssuableCollectionsAction
+
+  prepend_before_action(only: [:issues]) { authenticate_sessionless_user!(:rss) }
+  prepend_before_action(only: [:issues_calendar]) { authenticate_sessionless_user!(:ics) }
+
+  before_action :event_filter, only: :activity
+  before_action :projects, only: [:issues, :merge_requests]
+  before_action :set_show_full_reference, only: [:issues, :merge_requests]
+  before_action :check_filters_presence!, only: [:issues, :merge_requests]
+
   respond_to :html
 
-  before_filter :load_projects, except: [:projects]
-  before_filter :event_filter, only: :show
-
-  def show
-    @groups = current_user.authorized_groups.sort_by(&:human_name)
-    @has_authorized_projects = @projects.count > 0
-    @projects_count = @projects.count
-    @projects = @projects.limit(20)
-
-    @events = Event.in_projects(current_user.authorized_projects.pluck(:id))
-    @events = @event_filter.apply_filter(@events)
-    @events = @events.limit(20).offset(params[:offset] || 0)
-
-    @last_push = current_user.recent_push
-
+  def activity
     respond_to do |format|
       format.html
-      format.js
-      format.atom { render layout: false }
-    end
-  end
 
-  def projects
-    @projects = case params[:scope]
-                when 'personal' then
-                  current_user.namespace.projects
-                when 'joined' then
-                  current_user.authorized_projects.joined(current_user)
-                when 'owned' then
-                  current_user.owned_projects
-                else
-                  current_user.authorized_projects
-                end.sorted_by_activity
-
-    @labels = current_user.authorized_projects.tags_on(:labels)
-
-    @projects = @projects.tagged_with(params[:label]) if params[:label].present?
-    @projects = @projects.page(params[:page]).per(30)
-  end
-
-  # Get authored or assigned open merge requests
-  def merge_requests
-    @merge_requests = current_user.cared_merge_requests
-    @merge_requests = FilterContext.new(@merge_requests, params).execute
-    @merge_requests = @merge_requests.recent.page(params[:page]).per(20)
-  end
-
-  # Get only assigned issues
-  def issues
-    @issues = current_user.assigned_issues
-    @issues = FilterContext.new(@issues, params).execute
-    @issues = @issues.recent.page(params[:page]).per(20)
-    @issues = @issues.includes(:author, :project)
-
-    respond_to do |format|
-      format.html
-      format.atom { render layout: false }
+      format.json do
+        load_events
+        pager_json("events/_events", @events.count)
+      end
     end
   end
 
   protected
 
-  def load_projects
-    @projects = current_user.authorized_projects.sorted_by_activity
+  def load_events
+    projects =
+      if params[:filter] == "starred"
+        ProjectsFinder.new(current_user: current_user, params: { starred: true }).execute
+      else
+        current_user.authorized_projects
+      end
+
+    @events = EventCollection
+      .new(projects, offset: params[:offset].to_i, filter: event_filter)
+      .to_a
+
+    Events::RenderService.new(current_user).execute(@events)
   end
 
-  def event_filter
-    filters = cookies['event_filter'].split(',') if cookies['event_filter'].present?
-    @event_filter ||= EventFilter.new(filters)
+  def set_show_full_reference
+    @show_full_reference = true
+  end
+
+  def check_filters_presence!
+    no_scalar_filters_set = finder_type.scalar_params.none? { |k| params.key?(k) }
+    no_array_filters_set = finder_type.array_params.none? { |k, _| params.key?(k) }
+
+    @no_filters_set = no_scalar_filters_set && no_array_filters_set
+
+    return unless @no_filters_set
+
+    # Call to set selected `state` and `sort` options in view
+    finder_options
+
+    respond_to do |format|
+      format.html { render }
+      format.atom { head :bad_request }
+    end
   end
 end

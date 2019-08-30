@@ -1,2 +1,6 @@
-web: bundle exec unicorn_rails -p $PORT -E development
-worker: bundle exec sidekiq -q post_receive,mailer,system_hook,project_web_hook,common,default,gitlab_shell
+# For DEVELOPMENT only. Production uses Runit in
+# https://gitlab.com/gitlab-org/omnibus-gitlab or the init scripts in
+# lib/support/init.d, which call scripts in bin/ .
+#
+web: RAILS_ENV=development bin/web start_foreground
+worker: RAILS_ENV=development bin/background_jobs start_foreground

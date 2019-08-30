@@ -1,47 +1,28 @@
-%h3.page-title= @milestone.new_record? ? "New Milestone" : "Edit Milestone ##{@milestone.id}"
-.back-link
-  = link_to project_milestones_path(@project) do
-    &larr; To milestones
-
-%hr
-
-= form_for [@project, @milestone], html: {class: "new_milestone form-horizontal"}  do |f|
-  -if @milestone.errors.any?
-    .alert.alert-error
-      %ul
-        - @milestone.errors.full_messages.each do |msg|
-          %li= msg
+= form_for [@project.namespace.becomes(Namespace), @project, @milestone],
+           html: { class: 'milestone-form common-note-form js-quick-submit js-requires-input' } do |f|
+  = form_errors(@milestone)
   .row
-    .span6
-      .control-group
-        = f.label :title, "Title", class: "control-label"
-        .controls
-          = f.text_field :title, maxlength: 255, class: "input-xlarge"
-          %p.hint Required
-      .control-group
-        = f.label :description, "Description", class: "control-label"
-        .controls
-          = f.text_area :description, maxlength: 2000, class: "input-xlarge", rows: 10
-          %p.hint Milestones are parsed with #{link_to "GitLab Flavored Markdown", help_markdown_path, target: '_blank'}.
-    .span6
-      .control-group
-        = f.label :due_date, "Due Date", class: "control-label"
-        .controls= f.hidden_field :due_date
-        .controls
-          .datepicker
+    .col-md-6
+      .form-group.row
+        .col-form-label.col-sm-2
+          = f.label :title, _('Title')
+        .col-sm-10
+          = f.text_field :title, maxlength: 255, class: 'qa-milestone-title form-control', required: true, autofocus: true
+      .form-group.row.milestone-description
+        .col-form-label.col-sm-2
+          = f.label :description, _('Description')
+        .col-sm-10
+          = render layout: 'projects/md_preview', locals: { url: preview_markdown_path(@project) } do
+            = render 'projects/zen', f: f, attr: :description, classes: 'qa-milestone-description note-textarea', placeholder: _('Write milestone description...')
+            = render 'shared/notes/hints'
+          .clearfix
+          .error-alert
+    = render 'shared/milestones/form_dates', f: f
 
   .form-actions
     - if @milestone.new_record?
-      = f.submit 'Create milestone', class: "btn-create btn"
-      = link_to "Cancel", project_milestones_path(@project), class: "btn btn-cancel"
-    -else
-      = f.submit 'Save changes', class: "btn-save btn"
-      = link_to "Cancel", project_milestone_path(@project, @milestone), class: "btn btn-cancel"
-
-
-:javascript
-  disableButtonIfEmptyField("#milestone_title", ".btn-save");
-  $( ".datepicker" ).datepicker({
-    dateFormat: "yy-mm-dd",
-    onSelect: function(dateText, inst) { $("#milestone_due_date").val(dateText) }
-  }).datepicker("setDate", $.datepicker.parseDate('yy-mm-dd', $('#milestone_due_date').val()));
+      = f.submit _('Create milestone'), class: 'btn-success btn qa-milestone-create-button'
+      = link_to _('Cancel'), project_milestones_path(@project), class: 'btn btn-cancel'
+    - else
+      = f.submit _('Save changes'), class: 'btn-success btn'
+      = link_to _('Cancel'), project_milestone_path(@project, @milestone), class: 'btn btn-cancel'

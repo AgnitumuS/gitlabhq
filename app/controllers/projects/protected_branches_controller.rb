@@ -1,26 +1,27 @@
-class Projects::ProtectedBranchesController < Projects::ApplicationController
-  # Authorize
-  before_filter :authorize_read_project!
-  before_filter :require_non_empty_project
+# frozen_string_literal: true
 
-  before_filter :authorize_admin_project!, only: [:destroy, :create]
+class Projects::ProtectedBranchesController < Projects::ProtectedRefsController
+  protected
 
-  def index
-    @branches = @project.protected_branches.all
-    @protected_branch = @project.protected_branches.new
+  def project_refs
+    @project.repository.branches
   end
 
-  def create
-    @project.protected_branches.create(params[:protected_branch])
-    redirect_to project_protected_branches_path(@project)
+  def service_namespace
+    ::ProtectedBranches
   end
 
-  def destroy
-    @project.protected_branches.find(params[:id]).destroy
+  def load_protected_ref
+    @protected_ref = @project.protected_branches.find(params[:id])
+  end
 
-    respond_to do |format|
-      format.html { redirect_to project_protected_branches_path }
-      format.js { render nothing: true }
-    end
+  def access_levels
+    [:merge_access_levels, :push_access_levels]
+  end
+
+  def protected_ref_params
+    params.require(:protected_branch).permit(:name,
+                                             merge_access_levels_attributes: access_level_attributes,
+                                             push_access_levels_attributes: access_level_attributes)
   end
 end

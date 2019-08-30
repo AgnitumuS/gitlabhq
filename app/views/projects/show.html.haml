@@ -1,46 +1,34 @@
-= render 'clone_panel'
+- @no_container = true
+- breadcrumb_title _("Details")
+- @content_class = "limit-container-width" unless fluid_layout
 
-.row
-  .span9
-    = render "events/event_last_push", event: @last_push
-    .content_list
-    .loading.hide
-  .span3
-    .light-well
-      %h3.page-title
-        = @project.name
-      - if @project.description.present?
-        %p.light= @project.description
+= content_for :meta_tags do
+  = auto_discovery_link_tag(:atom, project_path(@project, rss_url_options), title: "#{@project.name} activity")
 
-      %hr
-      %p
-      %p
-        %span.light Repo size is
-        #{@project.repository.size} MB
-      %p
-        %span.light Created at
-        #{@project.created_at.stamp('Aug 22, 2013')}
-      %p
-        %span.light Owned by
-        - if @project.group
-          #{link_to @project.group.name, @project.group} Group
-        - else
-          #{link_to @project.owner_name, @project.owner}
-      - if @project.forked_from_project
-        %p
-          %i.icon-code-fork
-          Forked from:
-          = link_to @project.forked_from_project.name_with_namespace, project_path(@project.forked_from_project)
+= render partial: 'flash_messages', locals: { project: @project }
 
-      %hr
-      %p
-        = link_to pluralize(@repository.round_commit_count, 'commit'), project_commits_path(@project, @ref || @repository.root_ref)
-      %p
-        = link_to pluralize(@repository.branch_names.count, 'branch'), project_branches_path(@project)
-      %p
-        = link_to pluralize(@repository.tag_names.count, 'tag'), project_tags_path(@project)
+- if !@project.empty_repo? && can?(current_user, :download_code, @project)
+  - signatures_path = project_signatures_path(@project, @project.default_branch)
+  .js-signature-container{ data: { 'signatures-path': signatures_path } }
 
-      - if @project.gitlab_ci?
-        %hr
-        = link_to @project.gitlab_ci_service.builds_path do
-          = image_tag @project.gitlab_ci_service.status_img_path, alt: "build status"
+%div{ class: [container_class, ("limit-container-width" unless fluid_layout)] }
+  = render "projects/last_push"
+
+  = render "home_panel"
+
+  - if can?(current_user, :download_code, @project) && @project.repository_languages.present?
+    = repository_languages_bar(@project.repository_languages)
+
+  - if @project.archived?
+    .text-warning.center.prepend-top-20
+      %p
+        = icon("exclamation-triangle fw")
+        #{ _('Archived project! Repository and other project resources are read-only') }
+
+  - view_path = @project.default_view
+
+  - if show_auto_devops_callout?(@project)
+    = render 'shared/auto_devops_callout'
+
+  %div{ class: project_child_container_class(view_path) }
+    = render view_path, is_project_overview: true

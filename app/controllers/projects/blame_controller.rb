@@ -1,14 +1,21 @@
+# frozen_string_literal: true
+
 # Controller for viewing a file's blame
 class Projects::BlameController < Projects::ApplicationController
   include ExtractsPath
 
-  # Authorize
-  before_filter :authorize_read_project!
-  before_filter :authorize_code_access!
-  before_filter :require_non_empty_project
+  before_action :require_non_empty_project
+  before_action :assign_ref_vars
+  before_action :authorize_download_code!
 
   def show
-    @blob = Gitlab::Git::Blob.new(@repository, @commit.id, @ref, @path)
-    @blame = Gitlab::Git::Blame.new(project.repository, @commit.id, @path)
+    @blob = @repository.blob_at(@commit.id, @path)
+
+    return render_404 unless @blob
+
+    environment_params = @repository.branch_exists?(@ref) ? { ref: @ref } : { commit: @commit }
+    @environment = EnvironmentsFinder.new(@project, current_user, environment_params).execute.last
+
+    @blame_groups = Gitlab::Blame.new(@blob, @commit).groups
   end
 end

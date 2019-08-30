@@ -1,67 +1,53 @@
-%h3.page-title
-  Notifications settings
-%p.light
-  GitLab uses the email specified in your profile for notifications
-%hr
-.alert.alert-info
-  %p
-    %i.icon-circle.cred
-    %strong Disabled
-    &ndash; You will not get any notifications via email
-  %p
-    %i.icon-circle.cblue
-    %strong Participating
-    &ndash; You will only receive notifications from related resources (e.g. from your commits or assigned issues)
-  %p
-    %i.icon-circle.cgreen
-    %strong Watch
-    &ndash; You will receive all notifications from projects in which you participate
+- page_title _('Notifications')
+- @content_class = "limit-container-width" unless fluid_layout
 
-.row
-  .span4
-    %h4
-      = notification_icon(@notification)
-      Global setting
-  .span7
-    = form_tag profile_notifications_path, method: :put, remote: true, class: 'update-notifications' do
-      = hidden_field_tag :notification_type, 'global'
+%div
+  - if @user.errors.any?
+    .alert.alert-danger
+      %ul
+        - @user.errors.full_messages.each do |msg|
+          %li= msg
 
-      = label_tag do
-        = radio_button_tag :notification_level, Notification::N_DISABLED, @notification.disabled?, class: 'trigger-submit'
-        %span Disabled
+  = hidden_field_tag :notification_type, 'global'
+  .row.prepend-top-default
+    .col-lg-4.profile-settings-sidebar
+      %h4.prepend-top-0
+        = page_title
+      %p
+        = _('You can specify notification level per group or per project.')
+      %p
+        = _('By default, all projects and groups will use the global notifications setting.')
+    .col-lg-8
+      %h5.prepend-top-0
+        = _('Global notification settings')
 
-      = label_tag do
-        = radio_button_tag :notification_level, Notification::N_PARTICIPATING, @notification.participating?, class: 'trigger-submit'
-        %span Participating
+      = form_for @user, url: profile_notifications_path, method: :put, html: { class: 'update-notifications prepend-top-default' } do |f|
+        = render_if_exists 'profiles/notifications/email_settings', form: f
 
-      = label_tag do
-        = radio_button_tag :notification_level, Notification::N_WATCH, @notification.watch?, class: 'trigger-submit'
-        %span Watch
+      = label_tag :global_notification_level, "Global notification level", class: "label-bold"
+      %br
+      .clearfix
+      .form-group.float-left.global-notification-setting
+        = render 'shared/notifications/button', notification_setting: @global_notification_setting
 
-%br
-= link_to '#', class: 'js-toggle-visibility-link' do
-  %span.btn.btn-tiny
-    %i.icon-chevron-down
-    %span Advanced notifications settings
-.js-toggle-visibility-container.hide
-  %hr
-  %h4 Groups:
-  %ul.bordered-list
-    - @users_groups.each do |users_group|
-      - notification = Notification.new(users_group)
-      = render 'settings', type: 'group', membership: users_group, notification: notification
+      .clearfix
 
-  %h4 Projects:
-  %ul.bordered-list
-    - @users_projects.each do |users_project|
-      - notification = Notification.new(users_project)
-      = render 'settings', type: 'project', membership: users_project, notification: notification
+      = form_for @user, url: profile_notifications_path, method: :put do |f|
+        %label{ for: 'user_notified_of_own_activity' }
+          = f.check_box :notified_of_own_activity
+          %span= _('Receive notifications about your own activity')
 
-
-.save-status-fixed
-  %span.update-success.cgreen.hide
-    %i.icon-ok
-    Saved
-  %span.update-failed.cred.hide
-    %i.icon-remove
-    Failed
+      %hr
+      %h5
+        = _('Groups (%{count})') % { count: @group_notifications.count }
+      %div
+        - @group_notifications.each do |setting|
+          = render 'group_settings', setting: setting, group: setting.source
+      %h5
+        = _('Projects (%{count})') % { count: @project_notifications.count }
+      %p.account-well
+        = _('To specify the notification level per project of a group you belong to, you need to visit project page and change notification level there.')
+      .append-bottom-default
+        %ul.bordered-list
+          - @project_notifications.each do |setting|
+            = render 'project_settings', setting: setting, project: setting.source

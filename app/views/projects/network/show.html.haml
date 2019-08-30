@@ -1,14 +1,19 @@
+- breadcrumb_title "Graph"
+- page_title "Graph", @ref
 = render "head"
-.project-network
-  .tip
-    You can move around the graph by using the arrow keys.
-  .network-graph
-    .loading.loading-gray
+%div{ class: container_class }
+  .project-network
+    .controls
+      = form_tag project_network_path(@project, @id), method: :get, class: 'form-inline network-form' do |f|
+        = text_field_tag :extended_sha1, @options[:extended_sha1], placeholder: _("Git revision"), class: 'search-input form-control input-mx-250 search-sha'
+        = button_tag class: 'btn btn-success' do
+          = icon('search')
+        .inline.prepend-left-20
+          .form-check.light
+            = check_box_tag :filter_ref, 1, @options[:filter_ref], class: 'form-check-input'
+            = label_tag :filter_ref, class: 'form-check-label' do
+              %span= _("Begin with the selected commit")
 
-:javascript
-  new Network({
-    url: '#{project_network_path(@project, @ref, @options.merge(format: :json))}',
-    commit_url: '#{project_commit_path(@project, 'ae45ca32').gsub("ae45ca32", "%s")}',
-    ref: '#{@ref}',
-    commit_id: '#{@commit.id}'
-  })
+    - if @commit
+      .network-graph{ data: { url: @url, commit_url: @commit_url, ref: @ref, commit_id: @commit.id } }
+        = spinner nil, true

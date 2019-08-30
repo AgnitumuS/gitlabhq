@@ -1,128 +1,225 @@
+# frozen_string_literal: true
+
 module EventsHelper
-  def link_to_author(event)
+  ICON_NAMES_BY_EVENT_TYPE = {
+    'pushed to' => 'commit',
+    'pushed new' => 'commit',
+    'created' => 'status_open',
+    'opened' => 'status_open',
+    'closed' => 'status_closed',
+    'accepted' => 'fork',
+    'commented on' => 'comment',
+    'deleted' => 'remove',
+    'imported' => 'import',
+    'joined' => 'users'
+  }.freeze
+
+  def link_to_author(event, self_added: false)
     author = event.author
 
     if author
-      link_to author.name, user_path(author.username)
+      name = self_added ? 'You' : author.name
+      link_to name, user_path(author.username), title: name
     else
-      event.author_name
+      escape_once(event.author_name)
     end
   end
 
   def event_action_name(event)
-    target = if event.target_type
-               event.target_type.titleize.downcase
-             else
-               'project'
-             end
+    target =  if event.target_type
+                if event.note?
+                  event.note_target_type
+                else
+                  event.target_type.titleize.downcase
+                end
+              else
+                'project'
+              end
 
     [event.action_name, target].join(" ")
   end
 
-  def event_filter_link key, tooltip
+  def event_filter_link(key, text, tooltip)
     key = key.to_s
-    inactive = if @event_filter.active? key
-                 nil
-               else
-                 'inactive'
-               end
+    active = 'active' if @event_filter.active?(key)
+    link_opts = {
+      class: "event-filter-link",
+      id:    "#{key}_event_filter",
+      title: tooltip
+    }
 
-    content_tag :div, class: "filter_icon #{inactive}" do
-      link_to dashboard_path, class: 'has_tooltip event_filter_link', id: "#{key}_event_filter", 'data-original-title' => tooltip do
-        content_tag :i, nil, class: icon_for_event[key]
+    content_tag :li, class: active do
+      link_to request.path, link_opts do
+        content_tag(:span, ' ' + text)
       end
     end
   end
 
-  def icon_for_event
-    {
-      EventFilter.push     => "icon-upload-alt",
-      EventFilter.merged   => "icon-check",
-      EventFilter.comments => "icon-comments",
-      EventFilter.team     => "icon-user",
-    }
+  def event_filter_visible(feature_key)
+    return true unless @project
+
+    @project.feature_available?(feature_key, current_user)
+  end
+
+  def comments_visible?
+    event_filter_visible(:repository) ||
+      event_filter_visible(:merge_requests) ||
+      event_filter_visible(:issues)
+  end
+
+  def event_preposition(event)
+    if event.push_action? || event.commented_action? || event.target
+      "at"
+    elsif event.milestone?
+      "in"
+    end
   end
 
   def event_feed_title(event)
-    if event.issue?
-      "#{event.author_name} #{event.action_name} issue ##{event.target_id}: #{event.issue_title} at #{event.project_name}"
-    elsif event.merge_request?
-      "#{event.author_name} #{event.action_name} MR ##{event.target_id}: #{event.merge_request_title} at #{event.project_name}"
-    elsif event.push?
-      "#{event.author_name} #{event.push_action_name} #{event.ref_type} #{event.ref_name} at #{event.project_name}"
-    elsif event.membership_changed?
-      "#{event.author_name} #{event.action_name} #{event.project_name}"
-    elsif event.note?
-      "#{event.author_name} commented on #{event.note_target_type} ##{truncate event.note_target_id} at #{event.project_name}"
-    else
-      ""
+    words = []
+    words << event.author_name
+    words << event_action_name(event)
+
+    if event.push_action?
+      words << event.ref_type
+      words << event.ref_name
+      words << "at"
+    elsif event.commented_action?
+      words << event.note_target_reference
+      words << "at"
+    elsif event.milestone?
+      words << "##{event.target_iid}" if event.target_iid
+      words << "in"
+    elsif event.target
+      prefix =
+        if event.merge_request?
+          MergeRequest.reference_prefix
+        else
+          Issue.reference_prefix
+        end
+
+      words << "#{prefix}#{event.target_iid}:" if event.target_iid
+      words << event.target.title if event.target.respond_to?(:title)
+      words << "at"
     end
+
+    words << event.project_name
+
+    words.join(" ")
   end
 
   def event_feed_url(event)
     if event.issue?
-      project_issue_url(event.project, event.issue)
+      project_issue_url(event.project,
+                                  event.issue)
     elsif event.merge_request?
       project_merge_request_url(event.project, event.merge_request)
-
-    elsif event.push?
-      if event.push_with_commits?
-        if event.commits_count > 1
-          project_compare_url(event.project, from: event.commit_from, to: event.commit_to)
-        else
-          project_commit_url(event.project, id: event.commit_to)
-        end
-      else
-        project_commits_url(event.project, event.ref_name)
+    elsif event.commit_note?
+      project_commit_url(event.project,
+                                   event.note_target)
+    elsif event.note?
+      if event.note_target
+        event_note_target_url(event)
       end
+    elsif event.push_action?
+      push_event_feed_url(event)
+    elsif event.created_project_action?
+      project_url(event.project)
+    end
+  end
+
+  def push_event_feed_url(event)
+    if event.push_with_commits? && event.md_ref?
+      if event.commits_count > 1
+        project_compare_url(event.project,
+                                      from: event.commit_from, to:
+                                      event.commit_to)
+      else
+        project_commit_url(event.project,
+                                     id: event.commit_to)
+      end
+    else
+      project_commits_url(event.project,
+                                    event.ref_name)
     end
   end
 
   def event_feed_summary(event)
     if event.issue?
       render "events/event_issue", issue: event.issue
-    elsif event.push?
+    elsif event.push_action?
       render "events/event_push", event: event
+    elsif event.merge_request?
+      render "events/event_merge_request", merge_request: event.merge_request
+    elsif event.note?
+      render "events/event_note", note: event.note
     end
   end
 
-  def event_note_target_path(event)
-    if event.note? && event.note_commit?
-      project_commit_path(event.project, event.note_target)
+  def event_note_target_url(event)
+    if event.commit_note?
+      project_commit_url(event.project, event.note_target, anchor: dom_id(event.target))
+    elsif event.project_snippet_note?
+      project_snippet_url(event.project, event.note_target, anchor: dom_id(event.target))
+    elsif event.issue_note?
+      project_issue_url(event.project, id: event.note_target, anchor: dom_id(event.target))
+    elsif event.merge_request_note?
+      project_merge_request_url(event.project, id: event.note_target, anchor: dom_id(event.target))
     else
-      url_for([event.project, event.note_target])
+      polymorphic_url([event.project.namespace.becomes(Namespace),
+                       event.project, event.note_target],
+                        anchor: dom_id(event.target))
     end
   end
 
   def event_note_title_html(event)
     if event.note_target
-      if event.note_commit?
-        link_to project_commit_path(event.project, event.note_commit_id), class: "commit_short_id" do
-          "#{event.note_target_type} #{event.note_short_commit_id}"
-        end
-      elsif event.note_project_snippet?
-        link_to(project_snippet_path(event.project, event.note_target)) do
-          content_tag :strong do
-            "#{event.note_target_type} ##{truncate event.note_target_id}"
-          end
-        end
-      else
-        link_to event_note_target_path(event) do
-          content_tag :strong do
-            "#{event.note_target_type} ##{truncate event.note_target_iid}"
-          end
-        end
+      capture do
+        concat content_tag(:span, event.note_target_type, class: "event-target-type append-right-4")
+        concat link_to(event.note_target_reference, event_note_target_url(event), title: event.target_title, class: 'has-tooltip event-target-link append-right-4')
       end
-    elsif event.wall_note?
-      link_to 'wall', project_wall_path(event.project)
     else
-      content_tag :strong do
-        "(deleted)"
+      content_tag(:strong, '(deleted)')
+    end
+  end
+
+  def event_commit_title(message)
+    message ||= ''
+    (message.split("\n").first || "").truncate(70)
+  rescue
+    "--broken encoding"
+  end
+
+  def icon_for_event(note, size: 24)
+    icon_name = ICON_NAMES_BY_EVENT_TYPE[note]
+    sprite_icon(icon_name, size: size) if icon_name
+  end
+
+  def icon_for_profile_event(event)
+    if current_path?('users#show')
+      content_tag :div, class: "system-note-image #{event.action_name.parameterize}-icon" do
+        icon_for_event(event.action_name)
+      end
+    else
+      content_tag :div, class: 'system-note-image user-avatar' do
+        author_avatar(event, size: 40)
       end
     end
   end
 
-  def event_note(text)
-    sanitize(markdown(truncate(text, length: 150)), tags: %w(a img b pre p))
+  def inline_event_icon(event)
+    unless current_path?('users#show')
+      content_tag :span, class: "system-note-image-inline d-none d-sm-flex append-right-4 #{event.action_name.parameterize}-icon align-self-center" do
+        icon_for_event(event.action_name, size: 14)
+      end
+    end
+  end
+
+  def event_user_info(event)
+    content_tag(:div, class: "event-user-info") do
+      concat content_tag(:span, link_to_author(event), class: "author_name")
+      concat "&nbsp;".html_safe
+      concat content_tag(:span, event.author.to_reference, class: "username")
+    end
   end
 end

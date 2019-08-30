@@ -1,22 +1,5 @@
-.row
-  .span4
-    .ui-box
-      .title
-        SSH Key
-      %ul.well-list
-        %li
-          %span.light Title:
-          %strong= @key.title
-        %li
-          %span.light Created at:
-          %strong= @key.created_at.stamp("Aug 21, 2011")
-
-  .span8
-    %p
-      %span.light Fingerprint:
-      %strong= @key.fingerprint
-    %pre.well-pre
-      = @key.key
-
-.pull-right
-  = link_to 'Remove', profile_key_path(@key), confirm: 'Are you sure?', method: :delete, class: "btn btn-remove delete-key"
+- add_to_breadcrumbs "SSH Keys", profile_keys_path
+- breadcrumb_title @key.title
+- page_title @key.title, _('SSH Keys')
+- @content_class = "limit-container-width" unless fluid_layout
+= render "key_details"

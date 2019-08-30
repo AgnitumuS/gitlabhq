@@ -1,15 +1,23 @@
 require 'spec_helper'
 
-INVALID_FACTORIES = [
-  :key_with_a_space_in_the_middle,
-  :invalid_key,
-]
+describe 'factories' do
+  FactoryBot.factories.each do |factory|
+    describe "#{factory.name} factory" do
+      it 'does not raise error when built' do
+        expect { build(factory.name) }.not_to raise_error
+      end
 
-FactoryGirl.factories.map(&:name).each do |factory_name|
-  next if INVALID_FACTORIES.include?(factory_name)
-  describe "#{factory_name} factory" do
-    it 'should be valid' do
-      build(factory_name).should be_valid
+      it 'does not raise error when created' do
+        expect { create(factory.name) }.not_to raise_error
+      end
+
+      factory.definition.defined_traits.map(&:name).each do |trait_name|
+        describe "linting #{trait_name} trait" do
+          skip 'does not raise error when created' do
+            expect { create(factory.name, trait_name) }.not_to raise_error
+          end
+        end
+      end
     end
   end
 end

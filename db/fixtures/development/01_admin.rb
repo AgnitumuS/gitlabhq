@@ -1,12 +1,14 @@
-User.seed(:id, [
-  {
-    id: 1,
-    name: "Administrator",
-    email: "admin@local.host",
+require './spec/support/sidekiq'
+
+Gitlab::Seeder.quiet do
+  User.create!(
+    name: 'Administrator',
+    email: 'admin@example.com',
     username: 'root',
-    password: "5iveL!fe",
-    password_confirmation: "5iveL!fe",
+    password: '5iveL!fe',
     admin: true,
-    projects_limit: 100,
-  }
-])
+    confirmed_at: DateTime.now
+  )
+
+  print '.'
+end

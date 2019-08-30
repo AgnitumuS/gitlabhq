@@ -1,176 +1,191 @@
 require 'spec_helper'
 
-describe API::API do
-  include ApiHelpers
-
+describe API::Notes do
   let(:user) { create(:user) }
-  let!(:project) { create(:project, namespace: user.namespace ) }
-  let!(:issue) { create(:issue, project: project, author: user) }
-  let!(:merge_request) { create(:merge_request, source_project: project, target_project: project, author: user) }
-  let!(:snippet) { create(:project_snippet, project: project, author: user) }
-  let!(:issue_note) { create(:note, noteable: issue, project: project, author: user) }
-  let!(:merge_request_note) { create(:note, noteable: merge_request, project: project, author: user) }
-  let!(:snippet_note) { create(:note, noteable: snippet, project: project, author: user) }
-  let!(:wall_note) { create(:note, project: project, author: user) }
-  before { project.team << [user, :reporter] }
+  let!(:project) { create(:project, :public, namespace: user.namespace) }
+  let(:private_user) { create(:user) }
 
-  describe "GET /projects/:id/notes" do
-    context "when unauthenticated" do
-      it "should return authentication error" do
-        get api("/projects/#{project.id}/notes")
-        response.status.should == 401
+  before do
+    project.add_reporter(user)
+  end
+
+  context 'when there are cross-reference system notes' do
+    let(:url) { "/projects/#{project.id}/merge_requests/#{merge_request.iid}/notes" }
+    let(:notes_in_response) { json_response }
+
+    it_behaves_like 'with cross-reference system notes'
+  end
+
+  context "when noteable is an Issue" do
+    let!(:issue) { create(:issue, project: project, author: user) }
+    let!(:issue_note) { create(:note, noteable: issue, project: project, author: user) }
+
+    it_behaves_like "noteable API", 'projects', 'issues', 'iid' do
+      let(:parent) { project }
+      let(:noteable) { issue }
+      let(:note) { issue_note }
+    end
+
+    context 'when user does not have access to create noteable' do
+      let(:private_issue) { create(:issue, project: create(:project, :private)) }
+
+      ##
+      # We are posting to project user has access to, but we use issue id
+      # from a different project, see #15577
+      #
+      before do
+        post api("/projects/#{private_issue.project.id}/issues/#{private_issue.iid}/notes", user),
+             params: { body: 'Hi!' }
+      end
+
+      it 'responds with resource not found error' do
+        expect(response.status).to eq 404
+      end
+
+      it 'does not create new note' do
+        expect(private_issue.notes.reload).to be_empty
       end
     end
 
-    context "when authenticated" do
-      it "should return project wall notes" do
-        get api("/projects/#{project.id}/notes", user)
-        response.status.should == 200
-        json_response.should be_an Array
-        json_response.first['body'].should == wall_note.note
+    context "when referencing other project" do
+      # For testing the cross-reference of a private issue in a public project
+      let(:private_project) do
+        create(:project, namespace: private_user.namespace)
+        .tap { |p| p.add_maintainer(private_user) }
+      end
+      let(:private_issue) { create(:issue, project: private_project) }
+
+      let(:ext_proj)  { create(:project, :public) }
+      let(:ext_issue) { create(:issue, project: ext_proj) }
+
+      let!(:cross_reference_note) do
+        create :note,
+        noteable: ext_issue, project: ext_proj,
+        note: "mentioned in issue #{private_issue.to_reference(ext_proj)}",
+        system: true
+      end
+
+      describe "GET /projects/:id/noteable/:noteable_id/notes" do
+        context "current user cannot view the notes" do
+          it "returns an empty array" do
+            get api("/projects/#{ext_proj.id}/issues/#{ext_issue.iid}/notes", user)
+
+            expect(response).to have_gitlab_http_status(200)
+            expect(response).to include_pagination_headers
+            expect(json_response).to be_an Array
+            expect(json_response).to be_empty
+          end
+
+          context "issue is confidential" do
+            before do
+              ext_issue.update(confidential: true)
+            end
+
+            it "returns 404" do
+              get api("/projects/#{ext_proj.id}/issues/#{ext_issue.iid}/notes", user)
+
+              expect(response).to have_gitlab_http_status(404)
+            end
+          end
+        end
+
+        context "current user can view the note" do
+          it "returns an empty array" do
+            get api("/projects/#{ext_proj.id}/issues/#{ext_issue.iid}/notes", private_user)
+
+            expect(response).to have_gitlab_http_status(200)
+            expect(response).to include_pagination_headers
+            expect(json_response).to be_an Array
+            expect(json_response.first['body']).to eq(cross_reference_note.note)
+          end
+        end
+      end
+
+      describe "GET /projects/:id/noteable/:noteable_id/notes/:note_id" do
+        context "current user cannot view the notes" do
+          it "returns a 404 error" do
+            get api("/projects/#{ext_proj.id}/issues/#{ext_issue.iid}/notes/#{cross_reference_note.id}", user)
+
+            expect(response).to have_gitlab_http_status(404)
+          end
+
+          context "when issue is confidential" do
+            before do
+              issue.update(confidential: true)
+            end
+
+            it "returns 404" do
+              get api("/projects/#{project.id}/issues/#{issue.iid}/notes/#{issue_note.id}", private_user)
+
+              expect(response).to have_gitlab_http_status(404)
+            end
+          end
+        end
+
+        context "current user can view the note" do
+          it "returns an issue note by id" do
+            get api("/projects/#{ext_proj.id}/issues/#{ext_issue.iid}/notes/#{cross_reference_note.id}", private_user)
+
+            expect(response).to have_gitlab_http_status(200)
+            expect(json_response['body']).to eq(cross_reference_note.note)
+          end
+        end
       end
     end
   end
 
-  describe "GET /projects/:id/notes/:note_id" do
-    it "should return a wall note by id" do
-      get api("/projects/#{project.id}/notes/#{wall_note.id}", user)
-      response.status.should == 200
-      json_response['body'].should == wall_note.note
-    end
+  context "when noteable is a Snippet" do
+    let!(:snippet) { create(:project_snippet, project: project, author: user) }
+    let!(:snippet_note) { create(:note, noteable: snippet, project: project, author: user) }
 
-    it "should return a 404 error if note not found" do
-      get api("/projects/#{project.id}/notes/123", user)
-      response.status.should == 404
+    it_behaves_like "noteable API", 'projects', 'snippets', 'id' do
+      let(:parent) { project }
+      let(:noteable) { snippet }
+      let(:note) { snippet_note }
     end
   end
 
-  describe "POST /projects/:id/notes" do
-    it "should create a new wall note" do
-      post api("/projects/#{project.id}/notes", user), body: 'hi!'
-      response.status.should == 201
-      json_response['body'].should == 'hi!'
+  context "when noteable is a Merge Request" do
+    let!(:merge_request) { create(:merge_request, source_project: project, target_project: project, author: user) }
+    let!(:merge_request_note) { create(:note, noteable: merge_request, project: project, author: user) }
+
+    it_behaves_like "noteable API", 'projects', 'merge_requests', 'iid' do
+      let(:parent) { project }
+      let(:noteable) { merge_request }
+      let(:note) { merge_request_note }
     end
 
-    it "should return 401 unauthorized error" do
-      post api("/projects/#{project.id}/notes")
-      response.status.should == 401
-    end
-
-    it "should return a 400 bad request if body is missing" do
-      post api("/projects/#{project.id}/notes", user)
-      response.status.should == 400
-    end
-  end
-
-  describe "GET /projects/:id/noteable/:noteable_id/notes" do
-    context "when noteable is an Issue" do
-      it "should return an array of issue notes" do
-        get api("/projects/#{project.id}/issues/#{issue.id}/notes", user)
-        response.status.should == 200
-        json_response.should be_an Array
-        json_response.first['body'].should == issue_note.note
+    context 'when the merge request discussion is locked' do
+      before do
+        merge_request.update_attribute(:discussion_locked, true)
       end
 
-      it "should return a 404 error when issue id not found" do
-        get api("/projects/#{project.id}/issues/123/notes", user)
-        response.status.should == 404
-      end
-    end
+      context 'when a user is a team member' do
+        subject { post api("/projects/#{project.id}/merge_requests/#{merge_request.iid}/notes", user), params: { body: 'Hi!' } }
 
-    context "when noteable is a Snippet" do
-      it "should return an array of snippet notes" do
-        get api("/projects/#{project.id}/snippets/#{snippet.id}/notes", user)
-        response.status.should == 200
-        json_response.should be_an Array
-        json_response.first['body'].should == snippet_note.note
-      end
+        it 'returns 200 status' do
+          subject
 
-      it "should return a 404 error when snippet id not found" do
-        get api("/projects/#{project.id}/snippets/42/notes", user)
-        response.status.should == 404
-      end
-    end
+          expect(response).to have_gitlab_http_status(201)
+        end
 
-    context "when noteable is a Merge Request" do
-      it "should return an array of merge_requests notes" do
-        get api("/projects/#{project.id}/merge_requests/#{merge_request.id}/notes", user)
-        response.status.should == 200
-        json_response.should be_an Array
-        json_response.first['body'].should == merge_request_note.note
+        it 'creates a new note' do
+          expect { subject }.to change { Note.count }.by(1)
+        end
       end
 
-      it "should return a 404 error if merge request id not found" do
-        get api("/projects/#{project.id}/merge_requests/4444/notes", user)
-        response.status.should == 404
-      end
-    end
-  end
+      context 'when a user is not a team member' do
+        subject { post api("/projects/#{project.id}/merge_requests/#{merge_request.iid}/notes", private_user), params: { body: 'Hi!' } }
 
-  describe "GET /projects/:id/noteable/:noteable_id/notes/:note_id" do
-    context "when noteable is an Issue" do
-      it "should return an issue note by id" do
-        get api("/projects/#{project.id}/issues/#{issue.id}/notes/#{issue_note.id}", user)
-        response.status.should == 200
-        json_response['body'].should == issue_note.note
-      end
+        it 'returns 403 status' do
+          subject
 
-      it "should return a 404 error if issue note not found" do
-        get api("/projects/#{project.id}/issues/#{issue.id}/notes/123", user)
-        response.status.should == 404
-      end
-    end
+          expect(response).to have_gitlab_http_status(403)
+        end
 
-    context "when noteable is a Snippet" do
-      it "should return a snippet note by id" do
-        get api("/projects/#{project.id}/snippets/#{snippet.id}/notes/#{snippet_note.id}", user)
-        response.status.should == 200
-        json_response['body'].should == snippet_note.note
-      end
-
-      it "should return a 404 error if snippet note not found" do
-        get api("/projects/#{project.id}/snippets/#{snippet.id}/notes/123", user)
-        response.status.should == 404
-      end
-    end
-  end
-
-  describe "POST /projects/:id/noteable/:noteable_id/notes" do
-    context "when noteable is an Issue" do
-      it "should create a new issue note" do
-        post api("/projects/#{project.id}/issues/#{issue.id}/notes", user), body: 'hi!'
-        response.status.should == 201
-        json_response['body'].should == 'hi!'
-        json_response['author']['email'].should == user.email
-      end
-
-      it "should return a 400 bad request error if body not given" do
-        post api("/projects/#{project.id}/issues/#{issue.id}/notes", user)
-        response.status.should == 400
-      end
-
-      it "should return a 401 unauthorized error if user not authenticated" do
-        post api("/projects/#{project.id}/issues/#{issue.id}/notes"), body: 'hi!'
-        response.status.should == 401
-      end
-    end
-
-    context "when noteable is a Snippet" do
-      it "should create a new snippet note" do
-        post api("/projects/#{project.id}/snippets/#{snippet.id}/notes", user), body: 'hi!'
-        response.status.should == 201
-        json_response['body'].should == 'hi!'
-        json_response['author']['email'].should == user.email
-      end
-
-      it "should return a 400 bad request error if body not given" do
-        post api("/projects/#{project.id}/snippets/#{snippet.id}/notes", user)
-        response.status.should == 400
-      end
-
-      it "should return a 401 unauthorized error if user not authenticated" do
-        post api("/projects/#{project.id}/snippets/#{snippet.id}/notes"), body: 'hi!'
-        response.status.should == 401
+        it 'does not create a new note' do
+          expect { subject }.not_to change { Note.count }
+        end
       end
     end
   end

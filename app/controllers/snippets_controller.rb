@@ -1,45 +1,42 @@
+# frozen_string_literal: true
+
 class SnippetsController < ApplicationController
-  before_filter :snippet, only: [:show, :edit, :destroy, :update, :raw]
+  include RendersNotes
+  include ToggleAwardEmoji
+  include SpammableActions
+  include SnippetsActions
+  include RendersBlob
+  include PreviewMarkdown
+
+  skip_before_action :verify_authenticity_token,
+    if: -> { action_name == 'show' && js_request? }
+
+  before_action :snippet, only: [:show, :edit, :destroy, :update, :raw]
+
+  # Allow read snippet
+  before_action :authorize_read_snippet!, only: [:show, :raw]
 
   # Allow modify snippet
-  before_filter :authorize_modify_snippet!, only: [:edit, :update]
+  before_action :authorize_update_snippet!, only: [:edit, :update]
 
   # Allow destroy snippet
-  before_filter :authorize_admin_snippet!, only: [:destroy]
+  before_action :authorize_admin_snippet!, only: [:destroy]
 
-  before_filter :set_title
+  skip_before_action :authenticate_user!, only: [:index, :show, :raw]
 
+  layout 'snippets'
   respond_to :html
 
-  layout 'navless'
-
   def index
-    @snippets = Snippet.public.fresh.non_expired.page(params[:page]).per(20)
-  end
+    if params[:username].present?
+      @user = UserFinder.new(params[:username]).find_by_username!
 
-  def user_index
-    @user = User.find_by_username(params[:username])
-    @snippets = @user.snippets.fresh.non_expired
+      @snippets = SnippetsFinder.new(current_user, author: @user, scope: params[:scope])
+        .execute.page(params[:page])
 
-    if @user == current_user
-      @snippets = case params[:scope]
-                  when 'public' then
-                    @snippets.public
-                  when 'private' then
-                    @snippets.private
-                  else
-                    @snippets
-                  end
+      render 'index'
     else
-      @snippets = @snippets.public
-    end
-
-    @snippets = @snippets.page(params[:page]).per(20)
-
-    if @user == current_user
-      render 'current_user_index'
-    else
-      render 'user_index'
+      redirect_to(current_user ? dashboard_snippets_path : explore_snippets_path)
     end
   end
 
@@ -48,28 +45,50 @@ class SnippetsController < ApplicationController
   end
 
   def create
-    @snippet = PersonalSnippet.new(params[:personal_snippet])
-    @snippet.author = current_user
+    create_params = snippet_params.merge(spammable_params)
 
-    if @snippet.save
-      redirect_to snippet_path(@snippet)
-    else
-      respond_with @snippet
-    end
-  end
+    @snippet = CreateSnippetService.new(nil, current_user, create_params).execute
 
-  def edit
+    move_temporary_files if @snippet.valid? && params[:files]
+
+    recaptcha_check_with_fallback { render :new }
   end
 
   def update
-    if @snippet.update_attributes(params[:personal_snippet])
-      redirect_to snippet_path(@snippet)
-    else
-      respond_with @snippet
-    end
+    update_params = snippet_params.merge(spammable_params)
+
+    UpdateSnippetService.new(nil, current_user, @snippet, update_params).execute
+
+    recaptcha_check_with_fallback { render :edit }
   end
 
   def show
+    blob = @snippet.blob
+    conditionally_expand_blob(blob)
+
+    @note = Note.new(noteable: @snippet)
+    @noteable = @snippet
+
+    @discussions = @snippet.discussions
+    @notes = prepare_notes_for_rendering(@discussions.flat_map(&:notes), @noteable)
+
+    respond_to do |format|
+      format.html do
+        render 'show'
+      end
+
+      format.json do
+        render_blob_json(blob)
+      end
+
+      format.js do
+        if @snippet.embeddable?
+          render 'shared/snippets/show'
+        else
+          head :not_found
+        end
+      end
+    end
   end
 
   def destroy
@@ -77,33 +96,49 @@ class SnippetsController < ApplicationController
 
     @snippet.destroy
 
-    redirect_to snippets_path
-  end
-
-  def raw
-    send_data(
-      @snippet.content,
-      type: "text/plain",
-      disposition: 'inline',
-      filename: @snippet.file_name
-    )
+    redirect_to snippets_path, status: :found
   end
 
   protected
 
+  # rubocop: disable CodeReuse/ActiveRecord
   def snippet
-    @snippet ||= PersonalSnippet.where('author_id = :user_id or private is false', user_id: current_user.id).find(params[:id])
+    @snippet ||= PersonalSnippet.inc_relations_for_view.find_by(id: params[:id])
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
+  alias_method :awardable, :snippet
+  alias_method :spammable, :snippet
+
+  def spammable_path
+    snippet_path(@snippet)
   end
 
-  def authorize_modify_snippet!
-    return render_404 unless can?(current_user, :modify_personal_snippet, @snippet)
+  def authorize_read_snippet!
+    return if can?(current_user, :read_personal_snippet, @snippet)
+
+    if current_user
+      render_404
+    else
+      authenticate_user!
+    end
+  end
+
+  def authorize_update_snippet!
+    return render_404 unless can?(current_user, :update_personal_snippet, @snippet)
   end
 
   def authorize_admin_snippet!
     return render_404 unless can?(current_user, :admin_personal_snippet, @snippet)
   end
 
-  def set_title
-    @title = 'Snippets'
+  def snippet_params
+    params.require(:personal_snippet).permit(:title, :content, :file_name, :private, :visibility_level, :description)
+  end
+
+  def move_temporary_files
+    params[:files].each do |file|
+      FileMover.new(file, from_model: current_user, to_model: @snippet).execute
+    end
   end
 end

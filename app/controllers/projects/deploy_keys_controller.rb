@@ -1,61 +1,90 @@
+# frozen_string_literal: true
+
 class Projects::DeployKeysController < Projects::ApplicationController
+  include RepositorySettingsRedirect
   respond_to :html
 
   # Authorize
-  before_filter :authorize_admin_project!
+  before_action :authorize_admin_project!
+  before_action :authorize_update_deploy_key!, only: [:edit, :update]
 
-  layout "project_settings"
+  layout 'project_settings'
 
   def index
-    @enabled_keys = @project.deploy_keys.all
-    @available_keys = available_keys - @enabled_keys
-  end
-
-  def show
-    @key = @project.deploy_keys.find(params[:id])
-  end
-
-  def new
-    @key = @project.deploy_keys.new
-
-    respond_with(@key)
-  end
-
-  def create
-    @key = DeployKey.new(params[:deploy_key])
-
-    if @key.valid? && @project.deploy_keys << @key
-      redirect_to project_deploy_keys_path(@project)
-    else
-      render "new"
+    respond_to do |format|
+      format.html { redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings') }
+      format.json do
+        render json: Projects::Settings::DeployKeysPresenter.new(@project, current_user: current_user).as_json
+      end
     end
   end
 
-  def destroy
-    @key = @project.deploy_keys.find(params[:id])
-    @key.destroy
+  def new
+    redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings')
+  end
 
-    respond_to do |format|
-      format.html { redirect_to project_deploy_keys_url }
-      format.js { render nothing: true }
+  def create
+    @key = DeployKeys::CreateService.new(current_user, create_params).execute(project: @project)
+
+    unless @key.valid?
+      flash[:alert] = @key.errors.full_messages.join(', ').html_safe
+    end
+
+    redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings')
+  end
+
+  def edit
+  end
+
+  def update
+    if deploy_key.update(update_params)
+      flash[:notice] = _('Deploy key was successfully updated.')
+      redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings')
+    else
+      render 'edit'
     end
   end
 
   def enable
-    project.deploy_keys << available_keys.find(params[:id])
+    key = Projects::EnableDeployKeyService.new(@project, current_user, params).execute
 
-    redirect_to project_deploy_keys_path(@project)
+    return render_404 unless key
+
+    respond_to do |format|
+      format.html { redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings') }
+      format.json { head :ok }
+    end
   end
 
   def disable
-    @project.deploy_keys_projects.where(deploy_key_id: params[:id]).last.destroy
+    deploy_key_project = Projects::DisableDeployKeyService.new(@project, current_user, params).execute
 
-    redirect_to project_deploy_keys_path(@project)
+    return render_404 unless deploy_key_project
+
+    respond_to do |format|
+      format.html { redirect_to_repository_settings(@project, anchor: 'js-deploy-keys-settings') }
+      format.json { head :ok }
+    end
   end
 
   protected
 
-  def available_keys
-    @available_keys ||= current_user.accessible_deploy_keys
+  def deploy_key
+    @deploy_key ||= DeployKey.find(params[:id])
+  end
+
+  def create_params
+    create_params = params.require(:deploy_key)
+                          .permit(:key, :title, deploy_keys_projects_attributes: [:can_push])
+    create_params.dig(:deploy_keys_projects_attributes, '0')&.merge!(project_id: @project.id)
+    create_params
+  end
+
+  def update_params
+    params.require(:deploy_key).permit(:title, deploy_keys_projects_attributes: [:id, :can_push])
+  end
+
+  def authorize_update_deploy_key!
+    access_denied! unless can?(current_user, :update_deploy_key, deploy_key)
   end
 end

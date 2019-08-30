@@ -7,10 +7,17 @@ production:
   database: gitlabhq_production
   pool: 10
   username: git
-  password:
-  # host: localhost
-  # port: 5432 
-  # socket: /tmp/postgresql.sock
+  password: "secure password"
+  host: localhost
+  # load_balancing:
+  #   hosts:
+  #     - host1.example.com
+  #     - host2.example.com
+  #   discover:
+  #     nameserver: 1.2.3.4
+  #     port: 8600
+  #     record: secondary.postgresql.service.consul
+  #     interval: 300
 
 #
 # Development specific
@@ -21,8 +28,8 @@ development:
   database: gitlabhq_development
   pool: 5
   username: postgres
-  password:
-  # socket: /tmp/postgresql.sock
+  password: "secure password"
+  host: localhost
 
 #
 # Staging specific
@@ -31,10 +38,10 @@ staging:
   adapter: postgresql
   encoding: unicode
   database: gitlabhq_staging
-  pool: 5
-  username: postgres
-  password:
-  # socket: /tmp/postgresql.sock
+  pool: 10
+  username: git
+  password: "secure password"
+  host: localhost
 
 # Warning: The database defined as "test" will be erased and
 # re-generated from your development database when you run "rake".
@@ -46,4 +53,5 @@ test: &test
   pool: 5
   username: postgres
   password:
-  # socket: /tmp/postgresql.sock
+  host: localhost
+  prepared_statements: false

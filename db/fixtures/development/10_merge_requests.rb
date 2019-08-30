@@ -1,41 +1,65 @@
-ActiveRecord::Base.observers.disable :all
+require './spec/support/sidekiq'
 
 Gitlab::Seeder.quiet do
-  (1..100).each  do |i|
-    # Random Project
-    project = Project.all.sample
+  # Limit the number of merge requests per project to avoid long seeds
+  MAX_NUM_MERGE_REQUESTS = 10
 
-    # Random user
-    user = project.users.sample
+  Project.non_archived.with_merge_requests_enabled.reject(&:empty_repo?).each do |project|
+    branches = project.repository.branch_names.sample(MAX_NUM_MERGE_REQUESTS * 2)
 
-    next unless user
+    branches.each do |branch_name|
+      break if branches.size < 2
+      source_branch = branches.pop
+      target_branch = branches.pop
 
-    next if project.empty_repo?
+      label_ids = project.labels.pluck(:id).sample(3)
+      label_ids += project.group.labels.sample(3) if project.group
 
-    branches = project.repository.branch_names.sample(2)
+      params = {
+        source_branch: source_branch,
+        target_branch: target_branch,
+        title: FFaker::Lorem.sentence(6),
+        description: FFaker::Lorem.sentences(3).join(" "),
+        milestone: project.milestones.sample,
+        assignees: [project.team.users.sample],
+        label_ids: label_ids
+      }
 
-    next if branches.uniq.size < 2
+      # Only create MRs with users that are allowed to create MRs
+      developer = project.team.developers.sample
+      break unless developer
 
-    user_id = user.id
-    Thread.current[:current_user] = user
-
-    MergeRequest.seed(:id, [{
-      id: i,
-      source_branch: branches.first,
-      target_branch: branches.last,
-      source_project_id: project.id,
-      target_project_id: project.id,
-      author_id: user_id,
-      assignee_id: user_id,
-      milestone: project.milestones.sample,
-      title: Faker::Lorem.sentence(6)
-    }])
-    print('.')
+      Sidekiq::Worker.skipping_transaction_check do
+        MergeRequests::CreateService.new(project, developer, params).execute
+      rescue Repository::AmbiguousRefError
+        # Ignore pipelines creation errors for now, we can doing that after
+        # https://gitlab.com/gitlab-org/gitlab-ce/issues/55966. will be resolved.
+      end
+      print '.'
+    end
   end
-end
 
-puts 'Load diffs for Merge Requests (it will take some time)...'
-MergeRequest.all.each do |mr|
-  mr.reload_code
+  project = Project.find_by_full_path('gitlab-org/gitlab-test')
+
+  next if project.empty_repo? # We don't have repository on CI
+
+  params = {
+    source_branch: 'feature',
+    target_branch: 'master',
+    title: 'Can be automatically merged'
+  }
+  Sidekiq::Worker.skipping_transaction_check do
+    MergeRequests::CreateService.new(project, User.admins.first, params).execute
+  end
+  print '.'
+
+  params = {
+    source_branch: 'feature_conflict',
+    target_branch: 'feature',
+    title: 'Cannot be automatically merged'
+  }
+  Sidekiq::Worker.skipping_transaction_check do
+    MergeRequests::CreateService.new(project, User.admins.first, params).execute
+  end
   print '.'
 end

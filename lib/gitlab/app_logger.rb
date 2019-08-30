@@ -1,7 +1,9 @@
+# frozen_string_literal: true
+
 module Gitlab
   class AppLogger < Gitlab::Logger
-    def self.file_name
-      'application.log'
+    def self.file_name_noext
+      'application'
     end
 
     def format_message(severity, timestamp, progname, msg)

@@ -1,9 +1,10 @@
-%p
-  New Issue was created.
-%p
-  = "Issue ##{@issue.id}"
-  = link_to_gfm truncate(@issue.title, length: 45), project_issue_url(@issue.project, @issue), title: @issue.title
-%p
-  Author: #{@issue.author_name}
-%p
-  Assignee: #{@issue.assignee_name}
+%p.details
+  #{link_to @issue.author_name, user_url(@issue.author)} created an issue:
+
+- if @issue.assignees.any?
+  %p
+    = assignees_label(@issue)
+
+- if @issue.description
+  %div
+  = markdown(@issue.description, pipeline: :email, author: @issue.author)

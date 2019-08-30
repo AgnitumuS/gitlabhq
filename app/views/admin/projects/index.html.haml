@@ -1,55 +1,44 @@
-.row
-  .span4
-    .admin-filter
-      = form_tag admin_projects_path, method: :get, class: 'form-inline' do
-        .control-group
-          = label_tag :name, 'Name:', class: 'control-label'
-          .controls
-            = text_field_tag :name, params[:name], class: "span2"
-
-        .control-group
-          = label_tag :owner_id, 'Owner:', class: 'control-label'
-          .controls
-            = users_select_tag :owner_id, selected: params[:owner_id], class: 'input-large'
-        .control-group
-          = label_tag :public_only, 'Public Only', class: 'control-label'
-          .controls
-            = check_box_tag :public_only, 1, params[:public_only]
-        .control-group
-          = label_tag :with_push, 'Not empty', class: 'control-label'
-          .controls
-            = check_box_tag :with_push, 1, params[:with_push]
-            &nbsp;
-            %span.light Projects with push events
-        .control-group
-          = label_tag :abandoned, 'Abandoned', class: 'control-label'
-          .controls
-            = check_box_tag :abandoned, 1, params[:abandoned]
-            &nbsp;
-            %span.light No activity over 6 month
+- @no_container = true
+- page_title "Projects"
+- params[:visibility_level] ||= []
 
 
+%div{ class: container_class }
+  .top-area.scrolling-tabs-container.inner-page-scroll-tabs
+    .prepend-top-default
+      .search-holder
+        = render 'shared/projects/search_form', autofocus: true, icon: true, admin_view: true
+        .dropdown
+          - toggle_text = 'Namespace'
+          - if params[:namespace_id].present?
+            = hidden_field_tag :namespace_id, params[:namespace_id]
+            - namespace = Namespace.find(params[:namespace_id])
+            - toggle_text = "#{namespace.kind}: #{namespace.full_path}"
+          = dropdown_toggle(toggle_text, { toggle: 'dropdown', is_filter: 'true' }, { toggle_class: 'js-namespace-select large' })
+          .dropdown-menu.dropdown-select.dropdown-menu-right
+            = dropdown_title('Namespaces')
+            = dropdown_filter("Search for Namespace")
+            = dropdown_content
+            = dropdown_loading
+        = render 'shared/projects/dropdown'
+        = link_to new_project_path, class: 'btn btn-success' do
+          New Project
+        = button_tag "Search", class: "btn btn-primary btn-search hide"
 
-        .form-actions
-          = submit_tag "Search", class: "btn submit btn-primary"
-          = link_to "Reset", admin_projects_path, class: "btn"
-  .span8
-    .ui-box
-      .title
-        Projects (#{@projects.total_count})
-        .pull-right
-          = link_to 'New Project', new_project_path, class: "btn btn-new"
-      %ul.well-list
-        - @projects.each do |project|
-          %li
-            - if project.public
-              = public_icon
-            - else
-              = private_icon
-            = link_to project.name_with_namespace, [:admin, project]
-            .pull-right
-              = link_to 'Edit', edit_project_path(project), id: "edit_#{dom_id(project)}", class: "btn btn-small"
-              = link_to 'Destroy', [project], confirm: remove_project_message(project), method: :delete, class: "btn btn-small btn-remove"
-        - if @projects.blank?
-          %p.nothing_here_message 0 projects matches
-    = paginate @projects, theme: "gitlab"
+    %ul.nav-links.nav.nav-tabs
+      - opts = params[:visibility_level].present? ? {} : { page: admin_projects_path }
+      = nav_link(opts) do
+        = link_to admin_projects_path do
+          All
+
+      = nav_link(html_options: { class: active_when(params[:visibility_level] == Gitlab::VisibilityLevel::PRIVATE.to_s) }) do
+        = link_to admin_projects_path(visibility_level: Gitlab::VisibilityLevel::PRIVATE) do
+          Private
+      = nav_link(html_options: { class: active_when(params[:visibility_level] == Gitlab::VisibilityLevel::INTERNAL.to_s) }) do
+        = link_to admin_projects_path(visibility_level: Gitlab::VisibilityLevel::INTERNAL) do
+          Internal
+      = nav_link(html_options: { class: active_when(params[:visibility_level] == Gitlab::VisibilityLevel::PUBLIC.to_s) }) do
+        = link_to admin_projects_path(visibility_level: Gitlab::VisibilityLevel::PUBLIC) do
+          Public
+
+  = render 'projects'

@@ -1,90 +1,94 @@
 .user_new
-  = form_for [:admin, @user] do |f|
-    -if @user.errors.any?
-      #error_explanation
-        %ul.unstyled.alert.alert-error
-          - @user.errors.full_messages.each do |msg|
-            %li= msg
+  = form_for [:admin, @user], html: { class: 'fieldset-form' } do |f|
+    = form_errors(@user)
 
     %fieldset
       %legend Account
-      .control-group
-        = f.label :name
-        .controls
-          = f.text_field :name, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :name
+        .col-sm-10
+          = f.text_field :name, required: true, autocomplete: 'off', class: 'form-control'
           %span.help-inline * required
-      .control-group
-        = f.label :username
-        .controls
-          = f.text_field :username, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :username
+        .col-sm-10
+          = f.text_field :username, required: true, autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: false, class: 'form-control'
           %span.help-inline * required
-      .control-group
-        = f.label :email
-        .controls
-          = f.text_field :email, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :email
+        .col-sm-10
+          = f.text_field :email, required: true, autocomplete: 'off', class: 'form-control'
           %span.help-inline * required
 
     - if @user.new_record?
       %fieldset
         %legend Password
-        .control-group
-          = f.label :password
-          .controls
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password
+          .col-sm-10
             %strong
-              A temporary password will be generated and sent to user.
+              Reset link will be generated and sent to the user.
               %br
-              User will be forced to change it after first sign in
+              User will be forced to set the password on first sign in.
     - else
       %fieldset
         %legend Password
-        .control-group
-          = f.label :password
-          .controls= f.password_field :password, disabled: f.object.force_random_password
-        .control-group
-          = f.label :password_confirmation
-          .controls= f.password_field :password_confirmation, disabled: f.object.force_random_password
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password
+          .col-sm-10
+            = f.password_field :password, disabled: f.object.force_random_password, class: 'form-control'
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password_confirmation
+          .col-sm-10
+            = f.password_field :password_confirmation, disabled: f.object.force_random_password, class: 'form-control'
 
-    %fieldset
-      %legend Access
-      .row
-        .span8
-          .control-group
-            = f.label :projects_limit
-            .controls= f.number_field :projects_limit
+    = render partial: 'access_levels', locals: { f: f }
 
-          .control-group
-            = f.label :can_create_group
-            .controls= f.check_box :can_create_group
+    = render_if_exists 'admin/users/namespace_plan_fieldset', f: f
 
-          .control-group
-            = f.label :admin do
-              %strong.cred Administrator
-            .controls= f.check_box :admin
-        .span4
-          - unless @user.new_record?
-            .alert.alert-error
-              - if @user.blocked?
-                %p This user is blocked and is not able to login to GitLab
-                = link_to 'Unblock User', unblock_admin_user_path(@user), method: :put, class: "btn btn-small"
-              - else
-                %p Blocked users will be removed from all projects &amp; will not be able to login to GitLab.
-                = link_to 'Block User', block_admin_user_path(@user), confirm: 'USER WILL BE BLOCKED! Are you sure?', method: :put, class: "btn btn-small btn-remove"
+    = render_if_exists 'admin/users/limits', f: f
+
     %fieldset
       %legend Profile
-      .control-group
-        = f.label :skype
-        .controls= f.text_field :skype
-      .control-group
-        = f.label :linkedin
-        .controls= f.text_field :linkedin
-      .control-group
-        = f.label :twitter
-        .controls= f.text_field :twitter
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :avatar
+        .col-sm-10
+          = f.file_field :avatar
+
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :skype
+        .col-sm-10
+          = f.text_field :skype, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :linkedin
+        .col-sm-10
+          = f.text_field :linkedin, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :twitter
+        .col-sm-10
+          = f.text_field :twitter, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :website_url
+        .col-sm-10
+          = f.text_field :website_url, class: 'form-control'
+
+    = render_if_exists 'admin/users/admin_notes', f: f
 
     .form-actions
       - if @user.new_record?
-        = f.submit 'Create user', class: "btn btn-create"
+        = f.submit 'Create user', class: "btn btn-success"
         = link_to 'Cancel', admin_users_path, class: "btn btn-cancel"
       - else
-        = f.submit 'Save changes', class: "btn btn-save"
+        = f.submit 'Save changes', class: "btn btn-success"
         = link_to 'Cancel', admin_user_path(@user), class: "btn btn-cancel"

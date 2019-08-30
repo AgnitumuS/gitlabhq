@@ -1,22 +1,36 @@
-%html{lang: "en"}
+%html{ lang: "en" }
   %head
-    %meta{content: "text/html; charset=utf-8", "http-equiv" => "Content-Type"}
-      %title
-        GitLab
-
-  %body
-    %h1{style: "background: #EEE; border-bottom: 1px solid #DDD; color: #474D57; font: normal 20px Helvetica, Arial, sans-serif; margin: 0; padding: 5px 10px; line-height: 32px; font-size: 16px;"}
+    %meta{ content: "text/html; charset=utf-8", "http-equiv" => "Content-Type" }
+    %title
       GitLab
-      - if @project
-        \|
-        = link_to @project.name_with_namespace, project_url(@project), style: 'color: #29B; text-decoration: none'
-    %table{align: "left", border: "0", cellpadding: "0", cellspacing: "0", style: "padding: 10px 0;", width: "100%"}
-      %tr
-        %td{align: "left", style: "margin: 0; padding: 10px;"}
-          = yield
+    = stylesheet_link_tag 'notify'
+    = yield :head
+  %body
+    .content
+      = html_header_message
+      = yield
+    .footer{ style: "margin-top: 10px;" }
+      %p
+        &mdash;
+        %br
+        - if @target_url
+          - if @reply_by_email
+            = _('Reply to this email directly or %{view_it_on_gitlab}.').html_safe % { view_it_on_gitlab: link_to(_("view it on GitLab"), @target_url) }
+          - else
+            #{link_to _("View it on GitLab"), @target_url}.
           %br
-      %tr
-        %td{align: "left", style: "margin: 0; padding: 10px;"}
-          %p{style: "font-size:small;color:#777"}
-            - if @project
-              You're receiving this notification because you are a member of the #{@project.name_with_namespace} project team.
+          -# Don't link the host in the line below, one link in the email is easier to quickly click than two.
+          = _("You're receiving this email because %{reason}.") % { reason: notification_reason_text(@reason) }
+          If you'd like to receive fewer emails, you can
+          - if @labels_url
+            adjust your #{link_to 'label subscriptions', @labels_url}.
+          - else
+            - if @unsubscribe_url
+              = link_to "unsubscribe", @unsubscribe_url
+              from this thread or
+            adjust your notification settings.
+
+          = email_action @target_url
+
+        = render_if_exists 'layouts/email_additional_text'
+        = html_footer_message

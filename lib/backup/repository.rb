@@ -1,105 +1,177 @@
+# frozen_string_literal: true
+
 require 'yaml'
 
 module Backup
   class Repository
-    attr_reader :repos_path
+    include Gitlab::ShellAdapter
+    attr_reader :progress
+
+    def initialize(progress)
+      @progress = progress
+    end
 
     def dump
       prepare
 
       Project.find_each(batch_size: 1000) do |project|
-        print " * #{project.path_with_namespace} ... "
+        progress.print " * #{display_repo_path(project)} ... "
 
-        if project.empty_repo?
-          puts "[SKIPPED]".cyan
-          next
-        end
-
-        # Create namespace dir if missing
-        FileUtils.mkdir_p(File.join(backup_repos_path, project.namespace.path)) if project.namespace
-
-        if system("cd #{path_to_repo(project)} > /dev/null 2>&1 && git bundle create #{path_to_bundle(project)} --all > /dev/null 2>&1")
-          puts "[DONE]".green
+        if project.hashed_storage?(:repository)
+          FileUtils.mkdir_p(File.dirname(File.join(backup_repos_path, project.disk_path)))
         else
-          puts "[FAILED]".red
+          FileUtils.mkdir_p(File.join(backup_repos_path, project.namespace.full_path)) if project.namespace
         end
 
-        wiki = GollumWiki.new(project)
+        if !empty_repo?(project)
+          backup_project(project)
+          progress.puts "[DONE]".color(:green)
+        else
+          progress.puts "[SKIPPED]".color(:cyan)
+        end
 
-        if File.exists?(path_to_repo(wiki))
-          print " * #{wiki.path_with_namespace} ... "
-          if system("cd #{path_to_repo(wiki)} > /dev/null 2>&1 && git bundle create #{path_to_bundle(wiki)} --all > /dev/null 2>&1")
-            puts " [DONE]".green
-          else
-            puts " [FAILED]".red
-          end
+        wiki = ProjectWiki.new(project)
+
+        if !empty_repo?(wiki)
+          backup_project(wiki)
+          progress.puts "[DONE] Wiki".color(:green)
+        else
+          progress.puts "[SKIPPED] Wiki".color(:cyan)
         end
       end
     end
 
-    def restore
-      if File.exists?(repos_path)
-        # Move repos dir to 'repositories.old' dir
-        bk_repos_path = File.join(repos_path, '..', 'repositories.old.' + Time.now.to_i.to_s)
-        FileUtils.mv(repos_path, bk_repos_path)
+    def prepare_directories
+      Gitlab.config.repositories.storages.each do |name, _repository_storage|
+        Gitlab::GitalyClient::StorageService.new(name).delete_all_repositories
       end
+    end
 
-      FileUtils.mkdir_p(repos_path)
+    def backup_project(project)
+      path_to_project_bundle = path_to_bundle(project)
+      Gitlab::GitalyClient::RepositoryService.new(project.repository)
+        .create_bundle(path_to_project_bundle)
+
+      backup_custom_hooks(project)
+    rescue => e
+      progress_warn(project, e, 'Failed to backup repo')
+    end
+
+    def backup_custom_hooks(project)
+      FileUtils.mkdir_p(project_backup_path(project))
+
+      custom_hooks_path = custom_hooks_tar(project)
+      Gitlab::GitalyClient::RepositoryService.new(project.repository)
+        .backup_custom_hooks(custom_hooks_path)
+    end
+
+    def restore_custom_hooks(project)
+      return unless Dir.exist?(project_backup_path(project))
+      return if Dir.glob("#{project_backup_path(project)}/custom_hooks*").none?
+
+      custom_hooks_path = custom_hooks_tar(project)
+      Gitlab::GitalyClient::RepositoryService.new(project.repository)
+        .restore_custom_hooks(custom_hooks_path)
+    end
+
+    def restore
+      prepare_directories
 
       Project.find_each(batch_size: 1000) do |project|
-        print "#{project.path_with_namespace} ... "
+        progress.print " * #{project.full_path} ... "
+        path_to_project_bundle = path_to_bundle(project)
+        project.ensure_storage_path_exists
 
-        project.namespace.ensure_dir_exist if project.namespace
-
-        if system("git clone --bare #{path_to_bundle(project)} #{path_to_repo(project)} > /dev/null 2>&1")
-          puts "[DONE]".green
+        restore_repo_success = nil
+        if File.exist?(path_to_project_bundle)
+          begin
+            project.repository.create_from_bundle(path_to_project_bundle)
+            restore_custom_hooks(project)
+            restore_repo_success = true
+          rescue => e
+            restore_repo_success = false
+            progress.puts "Error: #{e}".color(:red)
+          end
         else
-          puts "[FAILED]".red
+          restore_repo_success = gitlab_shell.create_project_repository(project)
         end
 
-        wiki = GollumWiki.new(project)
+        if restore_repo_success
+          progress.puts "[DONE]".color(:green)
+        else
+          progress.puts "[Failed] restoring #{project.full_path} repository".color(:red)
+        end
 
-        if File.exists?(path_to_bundle(wiki))
-          print " * #{wiki.path_with_namespace} ... "
-          if system("git clone --bare #{path_to_bundle(wiki)} #{path_to_repo(wiki)} > /dev/null 2>&1")
-            puts " [DONE]".green
-          else
-            puts " [FAILED]".red
+        wiki = ProjectWiki.new(project)
+        path_to_wiki_bundle = path_to_bundle(wiki)
+
+        if File.exist?(path_to_wiki_bundle)
+          progress.print " * #{wiki.full_path} ... "
+          begin
+            wiki.repository.create_from_bundle(path_to_wiki_bundle)
+            restore_custom_hooks(wiki)
+
+            progress.puts "[DONE]".color(:green)
+          rescue => e
+            progress.puts "[Failed] restoring #{wiki.full_path} wiki".color(:red)
+            progress.puts "Error #{e}".color(:red)
           end
         end
       end
 
-      print 'Put GitLab hooks in repositories dirs'.yellow
-      gitlab_shell_user_home = File.expand_path("~#{Gitlab.config.gitlab_shell.ssh_user}")
-      if system("#{gitlab_shell_user_home}/gitlab-shell/support/rewrite-hooks.sh #{Gitlab.config.gitlab_shell.repos_path}")
-        puts " [DONE]".green
-      else
-        puts " [FAILED]".red
-      end
-
+      restore_object_pools
     end
 
     protected
 
-    def path_to_repo(project)
-      File.join(repos_path, project.path_with_namespace + '.git')
-    end
-
     def path_to_bundle(project)
-      File.join(backup_repos_path, project.path_with_namespace + ".bundle")
+      File.join(backup_repos_path, project.disk_path + '.bundle')
     end
 
-    def repos_path
-      Gitlab.config.gitlab_shell.repos_path
+    def project_backup_path(project)
+      File.join(backup_repos_path, project.disk_path)
+    end
+
+    def custom_hooks_tar(project)
+      File.join(project_backup_path(project), "custom_hooks.tar")
     end
 
     def backup_repos_path
-      File.join(Gitlab.config.backup.path, "repositories")
+      File.join(Gitlab.config.backup.path, 'repositories')
     end
 
     def prepare
       FileUtils.rm_rf(backup_repos_path)
-      FileUtils.mkdir_p(backup_repos_path)
+      FileUtils.mkdir_p(Gitlab.config.backup.path)
+      FileUtils.mkdir(backup_repos_path, mode: 0700)
+    end
+
+    private
+
+    def progress_warn(project, cmd, output)
+      progress.puts "[WARNING] Executing #{cmd}".color(:orange)
+      progress.puts "Ignoring error on #{display_repo_path(project)} - #{output}".color(:orange)
+    end
+
+    def empty_repo?(project_or_wiki)
+      project_or_wiki.repository.expire_emptiness_caches
+      project_or_wiki.repository.empty?
+    end
+
+    def display_repo_path(project)
+      project.hashed_storage?(:repository) ? "#{project.full_path} (#{project.disk_path})" : project.full_path
+    end
+
+    def restore_object_pools
+      PoolRepository.includes(:source_project).find_each do |pool|
+        progress.puts " - Object pool #{pool.disk_path}..."
+
+        pool.source_project ||= pool.member_projects.first.root_of_fork_network
+        pool.state = 'none'
+        pool.save
+
+        pool.schedule
+      end
     end
   end
 end

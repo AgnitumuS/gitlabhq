@@ -1,7 +1,7 @@
 %p
-  Hi #{@user['name']}!
+  Hi #{sanitize_name(@user['name'])}!
 %p
-  - if Gitlab.config.gitlab.signup_enabled
+  - if Gitlab::CurrentSettings.allow_signup?
     Your account has been created successfully.
   - else
     The Administrator created an account for you. Now you are a member of the company GitLab application.
@@ -11,11 +11,7 @@
 
 - if @user.created_by_id
   %p
-    password..................................
-    %code= @password
-
+    = link_to "Click here to set your password", edit_password_url(@user, reset_password_token: @token)
   %p
-    You will be forced to change this password immediately after login.
-
-%p
-  = link_to "Click here to login", root_url
+    This link is valid for #{password_reset_token_valid_time}.
+    After it expires, you can #{link_to("request a new one", new_user_password_url(user_email: @user.email))}.

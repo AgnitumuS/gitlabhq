@@ -1,13 +1,8 @@
-= render "events/event_last_push", event: @last_push
+.nav-block.activities
+  = render 'shared/event_filter'
+  .controls
+    = link_to dashboard_projects_path(rss_url_options), class: 'btn d-none d-sm-inline-block has-tooltip', title: 'Subscribe' do
+      %i.fa.fa-rss
 
-.event_filter
-  = event_filter_link EventFilter.push, 'Push events'
-  = event_filter_link EventFilter.merged, 'Merge events'
-  = event_filter_link EventFilter.comments, 'Comments'
-  = event_filter_link EventFilter.team, 'Team'
-
-- if @events.any?
-  .content_list
-- else
-  %p.nothing_here_message Projects activity will be displayed here
-.loading.hide
+.content_list
+= spinner

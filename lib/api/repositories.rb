@@ -1,160 +1,154 @@
-module API
-  # Projects API
-  class Repositories < Grape::API
-    before { authenticate! }
+# frozen_string_literal: true
 
-    resource :projects do
+require 'mime/types'
+
+module API
+  class Repositories < Grape::API
+    include PaginationParams
+
+    before { authorize! :download_code, user_project }
+
+    params do
+      requires :id, type: String, desc: 'The ID of a project'
+    end
+    resource :projects, requirements: API::NAMESPACE_OR_PROJECT_REQUIREMENTS do
       helpers do
         def handle_project_member_errors(errors)
           if errors[:project_access].any?
             error!(errors[:project_access], 422)
           end
+
           not_found!
         end
-      end
 
-      # Get a project repository branches
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      # Example Request:
-      #   GET /projects/:id/repository/branches
-      get ":id/repository/branches" do
-        present user_project.repo.heads.sort_by(&:name), with: Entities::RepoObject, project: user_project
-      end
+        def assign_blob_vars!
+          authorize! :download_code, user_project
 
-      # Get a single branch
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   branch (required) - The name of the branch
-      # Example Request:
-      #   GET /projects/:id/repository/branches/:branch
-      get ":id/repository/branches/:branch" do
-        @branch = user_project.repo.heads.find { |item| item.name == params[:branch] }
-        not_found!("Branch does not exist") if @branch.nil?
-        present @branch, with: Entities::RepoObject, project: user_project
-      end
+          @repo = user_project.repository
 
-      # Protect a single branch
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   branch (required) - The name of the branch
-      # Example Request:
-      #   PUT /projects/:id/repository/branches/:branch/protect
-      put ":id/repository/branches/:branch/protect" do
-        @branch = user_project.repo.heads.find { |item| item.name == params[:branch] }
-        not_found! unless @branch
-        protected = user_project.protected_branches.find_by_name(@branch.name)
+          begin
+            @blob = Gitlab::Git::Blob.raw(@repo, params[:sha])
+            @blob.load_all_data!(@repo)
+          rescue
+            not_found! 'Blob'
+          end
 
-        unless protected
-          user_project.protected_branches.create(name: @branch.name)
+          not_found! 'Blob' unless @blob
         end
-
-        present @branch, with: Entities::RepoObject, project: user_project
       end
 
-      # Unprotect a single branch
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   branch (required) - The name of the branch
-      # Example Request:
-      #   PUT /projects/:id/repository/branches/:branch/unprotect
-      put ":id/repository/branches/:branch/unprotect" do
-        @branch = user_project.repo.heads.find { |item| item.name == params[:branch] }
-        not_found! unless @branch
-        protected = user_project.protected_branches.find_by_name(@branch.name)
-
-        if protected
-          protected.destroy
-        end
-
-        present @branch, with: Entities::RepoObject, project: user_project
+      desc 'Get a project repository tree' do
+        success Entities::TreeObject
       end
-
-      # Get a project repository tags
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      # Example Request:
-      #   GET /projects/:id/repository/tags
-      get ":id/repository/tags" do
-        present user_project.repo.tags.sort_by(&:name).reverse, with: Entities::RepoObject
+      params do
+        optional :ref, type: String, desc: 'The name of a repository branch or tag, if not given the default branch is used'
+        optional :path, type: String, desc: 'The path of the tree'
+        optional :recursive, type: Boolean, default: false, desc: 'Used to get a recursive tree'
+        use :pagination
       end
-
-      # Get a project repository commits
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   ref_name (optional) - The name of a repository branch or tag, if not given the default branch is used
-      # Example Request:
-      #   GET /projects/:id/repository/commits
-      get ":id/repository/commits" do
-        authorize! :download_code, user_project
-
-        page = (params[:page] || 0).to_i
-        per_page = (params[:per_page] || 20).to_i
-        ref = params[:ref_name] || user_project.try(:default_branch) || 'master'
-
-        commits = user_project.repository.commits(ref, nil, per_page, page * per_page)
-        present commits, with: Entities::RepoCommit
-      end
-
-      # Get a project repository tree
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   ref_name (optional) - The name of a repository branch or tag, if not given the default branch is used
-      # Example Request:
-      #   GET /projects/:id/repository/tree
-      get ":id/repository/tree" do
-        authorize! :download_code, user_project
-
-        ref = params[:ref_name] || user_project.try(:default_branch) || 'master'
+      get ':id/repository/tree' do
+        ref = params[:ref] || user_project.try(:default_branch) || 'master'
         path = params[:path] || nil
 
-        commit = user_project.repository.commit(ref)
-        tree = Tree.new(user_project.repository, commit.id, ref, path)
+        commit = user_project.commit(ref)
+        not_found!('Tree') unless commit
 
-        trees = []
-
-        %w(trees blobs submodules).each do |type|
-          trees += tree.send(type).map { |t| { name: t.name, type: type.singularize, mode: t.mode, id: t.id } }
-        end
-
-        trees
+        tree = user_project.repository.tree(commit.id, path, recursive: params[:recursive])
+        entries = ::Kaminari.paginate_array(tree.sorted_entries)
+        present paginate(entries), with: Entities::TreeObject
       end
 
-      # Get a raw file contents
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   sha (required) - The commit or branch name
-      #   filepath (required) - The path to the file to display
-      # Example Request:
-      #   GET /projects/:id/repository/commits/:sha/blob
-      get ":id/repository/commits/:sha/blob" do
-        authorize! :download_code, user_project
-        required_attributes! [:filepath]
+      desc 'Get raw blob contents from the repository'
+      params do
+        requires :sha, type: String, desc: 'The commit hash'
+      end
+      get ':id/repository/blobs/:sha/raw' do
+        assign_blob_vars!
 
-        ref = params[:sha]
+        send_git_blob @repo, @blob
+      end
 
-        repo = user_project.repository
+      desc 'Get a blob from the repository'
+      params do
+        requires :sha, type: String, desc: 'The commit hash'
+      end
+      get ':id/repository/blobs/:sha' do
+        assign_blob_vars!
 
-        commit = repo.commit(ref)
-        not_found! "Commit" unless commit
+        {
+          size: @blob.size,
+          encoding: "base64",
+          content: Base64.strict_encode64(@blob.data),
+          sha: @blob.id
+        }
+      end
 
-        blob = Gitlab::Git::Blob.new(repo, commit.id, ref, params[:filepath])
-        not_found! "File" unless blob.exists?
+      desc 'Get an archive of the repository'
+      params do
+        optional :sha, type: String, desc: 'The commit sha of the archive to be downloaded'
+        optional :format, type: String, desc: 'The archive format'
+      end
+      get ':id/repository/archive', requirements: { format: Gitlab::PathRegex.archive_formats_regex } do
+        send_git_archive user_project.repository, ref: params[:sha], format: params[:format], append_sha: true
+      rescue
+        not_found!('File')
+      end
 
-        env['api.format'] = :txt
+      desc 'Compare two branches, tags, or commits' do
+        success Entities::Compare
+      end
+      params do
+        requires :from, type: String, desc: 'The commit, branch name, or tag name to start comparison'
+        requires :to, type: String, desc: 'The commit, branch name, or tag name to stop comparison'
+        optional :straight, type: Boolean, desc: 'Comparison method, `true` for direct comparison between `from` and `to` (`from`..`to`), `false` to compare using merge base (`from`...`to`)', default: false
+      end
+      get ':id/repository/compare' do
+        compare = Gitlab::Git::Compare.new(user_project.repository.raw_repository, params[:from], params[:to], straight: params[:straight])
+        present compare, with: Entities::Compare
+      end
 
-        content_type blob.mime_type
-        present blob.data
+      desc 'Get repository contributors' do
+        success Entities::Contributor
+      end
+      params do
+        use :pagination
+        optional :order_by, type: String, values: %w[email name commits], default: 'commits', desc: 'Return contributors ordered by `name` or `email` or `commits`'
+        optional :sort, type: String, values: %w[asc desc], default: 'asc', desc: 'Sort by asc (ascending) or desc (descending)'
+      end
+      get ':id/repository/contributors' do
+        contributors = ::Kaminari.paginate_array(user_project.repository.contributors(order_by: params[:order_by], sort: params[:sort]))
+        present paginate(contributors), with: Entities::Contributor
+      rescue
+        not_found!
+      end
+
+      desc 'Get the common ancestor between commits' do
+        success Entities::Commit
+      end
+      params do
+        requires :refs, type: Array[String]
+      end
+      get ':id/repository/merge_base' do
+        refs = params[:refs]
+
+        if refs.size < 2
+          render_api_error!('Provide at least 2 refs', 400)
+        end
+
+        merge_base = Gitlab::Git::MergeBase.new(user_project.repository, refs)
+
+        if merge_base.unknown_refs.any?
+          ref_noun = 'ref'.pluralize(merge_base.unknown_refs.size)
+          message = "Could not find #{ref_noun}: #{merge_base.unknown_refs.join(', ')}"
+          render_api_error!(message, 400)
+        end
+
+        if merge_base.commit
+          present merge_base.commit, with: Entities::Commit
+        else
+          not_found!("Merge Base")
+        end
       end
     end
   end
 end
-

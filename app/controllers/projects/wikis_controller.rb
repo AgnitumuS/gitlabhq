@@ -1,63 +1,120 @@
-class Projects::WikisController < Projects::ApplicationController
-  before_filter :authorize_read_wiki!
-  before_filter :authorize_write_wiki!, only: [:edit, :create, :history]
-  before_filter :authorize_admin_wiki!, only: :destroy
-  before_filter :load_gollum_wiki
+# frozen_string_literal: true
 
-  def pages
-    @wiki_pages = @gollum_wiki.pages
+class Projects::WikisController < Projects::ApplicationController
+  include PreviewMarkdown
+  include SendsBlob
+  include Gitlab::Utils::StrongMemoize
+
+  before_action :authorize_read_wiki!
+  before_action :authorize_create_wiki!, only: [:edit, :create]
+  before_action :authorize_admin_wiki!, only: :destroy
+  before_action :load_project_wiki
+  before_action :load_page, only: [:show, :edit, :update, :history, :destroy]
+  before_action :valid_encoding?,
+    if: -> { %w[show edit update].include?(action_name) && load_page }
+  before_action only: [:edit, :update], unless: :valid_encoding? do
+    redirect_to(project_wiki_path(@project, @page))
   end
 
-  def show
-    @wiki = @gollum_wiki.find_page(params[:id], params[:version_id])
+  def new
+    redirect_to project_wiki_path(@project, SecureRandom.uuid, random_title: true)
+  end
 
-    if @wiki
+  def pages
+    @wiki_pages = Kaminari.paginate_array(
+      @project_wiki.list_pages(sort: params[:sort], direction: params[:direction])
+    ).page(params[:page])
+
+    @wiki_entries = WikiPage.group_by_directory(@wiki_pages)
+  end
+
+  # `#show` handles a number of scenarios:
+  #
+  # - If `id` matches a WikiPage, then show the wiki page.
+  # - If `id` is a file in the wiki repository, then send the file.
+  # - If we know the user wants to create a new page with the given `id`,
+  #   then display a create form.
+  # - Otherwise show the empty wiki page and invite the user to create a page.
+  def show
+    if @page
+      set_encoding_error unless valid_encoding?
+
       render 'show'
-    else
-      return render('empty') unless can?(current_user, :write_wiki, @project)
-      @wiki = WikiPage.new(@gollum_wiki)
-      @wiki.title = params[:id]
+    elsif file_blob
+      send_blob(@project_wiki.repository, file_blob)
+    elsif show_create_form?
+      # Assign a title to the WikiPage unless `id` is a randomly generated slug from #new
+      title = params[:id] unless params[:random_title].present?
+
+      @page = build_page(title: title)
 
       render 'edit'
+    else
+      render 'empty'
     end
   end
 
   def edit
-    @wiki = @gollum_wiki.find_page(params[:id])
   end
 
   def update
-    @wiki = @gollum_wiki.find_page(params[:id])
+    return render('empty') unless can?(current_user, :create_wiki, @project)
 
-    return render('empty') unless can?(current_user, :write_wiki, @project)
+    @page = WikiPages::UpdateService.new(@project, current_user, wiki_params).execute(@page)
 
-    if @wiki.update(content, format, message)
-      redirect_to [@project, @wiki], notice: 'Wiki was successfully updated.'
+    if @page.valid?
+      redirect_to(
+        project_wiki_path(@project, @page),
+        notice: _('Wiki was successfully updated.')
+      )
     else
       render 'edit'
     end
+  rescue WikiPage::PageChangedError, WikiPage::PageRenameError, Gitlab::Git::Wiki::OperationError => e
+    @error = e
+    render 'edit'
   end
 
   def create
-    @wiki = WikiPage.new(@gollum_wiki)
+    @page = WikiPages::CreateService.new(@project, current_user, wiki_params).execute
 
-    if @wiki.create(wiki_params)
-      redirect_to project_wiki_path(@project, @wiki), notice: 'Wiki was successfully updated.'
+    if @page.persisted?
+      redirect_to(
+        project_wiki_path(@project, @page),
+        notice: _('Wiki was successfully updated.')
+      )
     else
       render action: "edit"
     end
+  rescue Gitlab::Git::Wiki::OperationError => e
+    @page = build_page(wiki_params)
+    @error = e
+
+    render 'edit'
   end
 
   def history
-    @wiki = @gollum_wiki.find_page(params[:id])
-
-    redirect_to(project_wiki_path(@project, :home), notice: "Page not found") unless @wiki
+    if @page
+      @page_versions = Kaminari.paginate_array(@page.versions(page: params[:page].to_i),
+                                               total_count: @page.count_versions)
+        .page(params[:page])
+    else
+      redirect_to(
+        project_wiki_path(@project, :home),
+        notice: _("Page not found")
+      )
+    end
   end
 
   def destroy
-    @wiki = @gollum_wiki.find_page(params[:id])
-    @wiki.delete if @wiki
-    redirect_to project_wiki_path(@project, :home), notice: "Page was successfully deleted"
+    WikiPages::DestroyService.new(@project, current_user).execute(@page)
+
+    redirect_to project_wiki_path(@project, :home),
+                status: 302,
+                notice: _("Page was successfully deleted")
+  rescue Gitlab::Git::Wiki::OperationError => e
+    @error = e
+    render 'edit'
   end
 
   def git_access
@@ -65,31 +122,74 @@ class Projects::WikisController < Projects::ApplicationController
 
   private
 
-  def load_gollum_wiki
-    @gollum_wiki = GollumWiki.new(@project, current_user)
+  def show_create_form?
+    can?(current_user, :create_wiki, @project) &&
+      @page.nil? &&
+      # Always show the create form when the wiki has had at least one page created.
+      # Otherwise, we only show the form when the user has navigated from
+      # the 'empty wiki' page
+      (@project_wiki.exists? || params[:view] == 'create')
+  end
+
+  def load_project_wiki
+    @project_wiki = load_wiki
 
     # Call #wiki to make sure the Wiki Repo is initialized
-    @gollum_wiki.wiki
-  rescue GollumWiki::CouldNotCreateWikiError => ex
-    flash[:notice] = "Could not create Wiki Repository at this time. Please try again later."
-    redirect_to @project
-    return false
+    @project_wiki.wiki
+
+    @sidebar_page = @project_wiki.find_sidebar(params[:version_id])
+
+    unless @sidebar_page # Fallback to default sidebar
+      @sidebar_wiki_entries = WikiPage.group_by_directory(@project_wiki.list_pages(limit: 15))
+    end
+  rescue ProjectWiki::CouldNotCreateWikiError
+    flash[:notice] = _("Could not create Wiki Repository at this time. Please try again later.")
+    redirect_to project_path(@project)
+    false
+  end
+
+  def load_wiki
+    ProjectWiki.new(@project, current_user)
   end
 
   def wiki_params
-    params[:wiki].slice(:title, :content, :format, :message)
+    params.require(:wiki).permit(:title, :content, :format, :message, :last_commit_sha)
   end
 
-  def content
-    params[:wiki][:content]
+  def build_page(args = {})
+    WikiPage.new(@project_wiki).tap do |page|
+      page.update_attributes(args) # rubocop:disable Rails/ActiveRecordAliases
+    end
   end
 
-  def format
-    params[:wiki][:format]
+  def load_page
+    @page ||= @project_wiki.find_page(*page_params)
   end
 
-  def message
-    params[:wiki][:message]
+  def page_params
+    keys = [:id]
+    keys << :version_id if params[:action] == 'show'
+
+    params.values_at(*keys)
   end
 
+  def valid_encoding?
+    strong_memoize(:valid_encoding) do
+      @page.content.encoding == Encoding::UTF_8
+    end
+  end
+
+  def set_encoding_error
+    flash.now[:notice] = _("The content of this page is not encoded in UTF-8. Edits can only be made via the Git repository.")
+  end
+
+  def file_blob
+    strong_memoize(:file_blob) do
+      commit = @project_wiki.repository.commit(@project_wiki.default_branch)
+
+      next unless commit
+
+      @project_wiki.repository.blob_at(commit.id, params[:id])
+    end
+  end
 end

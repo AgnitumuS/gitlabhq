@@ -1,28 +1,88 @@
-class Projects::RepositoriesController < Projects::ApplicationController
-  # Authorize
-  before_filter :authorize_read_project!
-  before_filter :authorize_code_access!
-  before_filter :require_non_empty_project
+# frozen_string_literal: true
 
-  def stats
-    @stats = Gitlab::Git::Stats.new(@repository.raw, @repository.root_ref)
-    @graph = @stats.graph
+class Projects::RepositoriesController < Projects::ApplicationController
+  include ExtractsPath
+
+  # Authorize
+  before_action :require_non_empty_project, except: :create
+  before_action :assign_archive_vars, only: :archive
+  before_action :assign_append_sha, only: :archive
+  before_action :authorize_download_code!
+  before_action :authorize_admin_project!, only: :create
+
+  def create
+    @project.create_repository
+
+    redirect_to project_path(@project)
   end
 
   def archive
-    unless can?(current_user, :download_code, @project)
-      render_404 and return
-    end
+    set_cache_headers
+    return if archive_not_modified?
 
-    storage_path = Rails.root.join("tmp", "repositories")
+    send_git_archive @repository, **repo_params
+  rescue => ex
+    logger.error("#{self.class.name}: #{ex}")
+    git_not_found!
+  end
 
-    file_path = @repository.archive_repo(params[:ref], storage_path)
+  private
 
-    if file_path
-      # Send file to user
-      send_file file_path
+  def repo_params
+    @repo_params ||= { ref: @ref, path: params[:path], format: params[:format], append_sha: @append_sha }
+  end
+
+  def set_cache_headers
+    expires_in cache_max_age(archive_metadata['CommitId']), public: project.public?
+    fresh_when(etag: archive_metadata['ArchivePath'])
+  end
+
+  def archive_not_modified?
+    # Check response freshness (Last-Modified and ETag)
+    # against request If-Modified-Since and If-None-Match conditions.
+    request.fresh?(response)
+  end
+
+  def archive_metadata
+    @archive_metadata ||= @repository.archive_metadata(
+      @ref,
+      '', # Where archives are stored isn't really important for ETag purposes
+      repo_params[:format],
+      path: repo_params[:path],
+      append_sha: @append_sha
+    )
+  end
+
+  def cache_max_age(commit_id)
+    if @ref == commit_id
+      # This is a link to an archive by a commit SHA. That means that the archive
+      # is immutable. The only reason to invalidate the cache is if the commit
+      # was deleted or if the user lost access to the repository.
+      Repository::ARCHIVE_CACHE_TIME_IMMUTABLE
     else
-      render_404
+      # A branch or tag points at this archive. That means that the expected archive
+      # content may change over time.
+      Repository::ARCHIVE_CACHE_TIME
     end
+  end
+
+  def assign_append_sha
+    @append_sha = params[:append_sha]
+
+    if @ref
+      shortname = "#{@project.path}-#{@ref.tr('/', '-')}"
+      @append_sha = false if @filename == shortname
+    end
+  end
+
+  def assign_archive_vars
+    if params[:id]
+      @ref, @filename = extract_ref(params[:id])
+    else
+      @ref = params[:ref]
+      @filename = nil
+    end
+  rescue InvalidPathError
+    render_404
   end
 end

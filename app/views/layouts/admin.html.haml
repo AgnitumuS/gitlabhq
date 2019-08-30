@@ -1,11 +1,6 @@
-!!! 5
-%html{ lang: "en"}
-  = render "layouts/head", title: "Admin area"
-  %body{class: "#{app_theme} admin", :'data-page' => body_data_page}
-    = render "layouts/head_panel", title: "Admin area"
-    = render "layouts/flash"
-    %nav.main-nav
-      .container= render 'layouts/nav/admin'
+- page_title    _("Admin Area")
+- header_title  _("Admin Area"), admin_root_path
+- nav "admin"
+- @left_sidebar = true
 
-    .container
-      .content= yield
+= render template: "layouts/application"

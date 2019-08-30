@@ -1,32 +1,14 @@
-%ul.breadcrumb
-  %li
-    %i.icon-angle-right
-    = link_to project_tree_path(@project, @ref) do
-      = @project.path
-  - tree_breadcrumbs(@tree, 6) do |title, path|
-    \/
-    %li
-      - if path
-        - if path.end_with?(@path)
-          = link_to project_blob_path(@project, path) do
-            %span.cblue
-              = truncate(title, length: 40)
-        - else
-          = link_to truncate(title, length: 40), project_tree_path(@project, path)
-      - else
-        = link_to title, '#'
+= render "projects/blob/breadcrumb", blob: blob
 
-%div#tree-content-holder.tree-content-holder
-  .file-holder
-    .file-title
-      %i.icon-file
-      %span.file_name
-        = blob.name
-        %small= number_to_human_size blob.size
-      %span.options= render "actions"
-    - if blob.text?
-      = render "text", blob: blob
-    - elsif blob.image?
-      = render "image", blob: blob
-    - else
-      = render "download", blob: blob
+.info-well.d-none.d-sm-block
+  .well-segment
+    %ul.blob-commit-info
+      = render 'projects/commits/commit', commit: @last_commit, project: @project, ref: @ref
+
+  = render_if_exists 'projects/blob/owners', blob: blob
+  = render "projects/blob/auxiliary_viewer", blob: blob
+
+#blob-content-holder.blob-content-holder
+  %article.file-holder
+    = render 'projects/blob/header', blob: blob
+    = render 'projects/blob/content', blob: blob

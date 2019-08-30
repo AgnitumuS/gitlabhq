@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 # Provides an ActiveRecord-like interface to a model whose data is not persisted to a database.
 module StaticModel
   extend ActiveSupport::Concern
 
-  module ClassMethods
+  class_methods do
     # Used by ActiveRecord's polymorphic association to set object_id
     def primary_key
       'id'
@@ -18,7 +20,7 @@ module StaticModel
   #
   # Pass it along if we respond to it.
   def [](key)
-    send(key) if respond_to?(key)
+    send(key) if respond_to?(key) # rubocop:disable GitlabSecurity/PublicSend
   end
 
   def to_param

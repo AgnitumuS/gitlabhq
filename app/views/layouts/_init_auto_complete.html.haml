@@ -1,4 +1,11 @@
-:javascript
-  GitLab.GfmAutoComplete.dataSource = "#{autocomplete_sources_project_path(@project)}"
-  GitLab.GfmAutoComplete.Emoji.assetBase = '#{image_path("emoji")}'
-  GitLab.GfmAutoComplete.setup();
+- object = @target_project || @project || @group
+- noteable_type = @noteable.class if @noteable.present?
+
+- datasources = autocomplete_data_sources(object, noteable_type)
+
+- if object
+  = javascript_tag nonce: true do
+    :plain
+      gl = window.gl || {};
+      gl.GfmAutoComplete = gl.GfmAutoComplete || {};
+      gl.GfmAutoComplete.dataSources = #{datasources.to_json};

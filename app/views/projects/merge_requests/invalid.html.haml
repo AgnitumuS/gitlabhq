@@ -1,17 +1,25 @@
-.merge-request
-  = render "projects/merge_requests/show/mr_title"
-  = render "projects/merge_requests/show/mr_box"
+- page_title "#{@merge_request.title} (#{@merge_request.to_reference}", "Merge Requests"
 
-  .alert.alert-error
-    %h5
-      %i.icon-exclamation-sign
-      We cannot find
-      %span.label-branch= @merge_request.source_branch
-      or
-      %span.label-branch= @merge_request.target_branch
-      branches in the repository.
+.merge-request
+  = render "projects/merge_requests/mr_title"
+  = render "projects/merge_requests/mr_box"
+
+  .alert.alert-danger
     %p
-      Maybe it was removed or never pushed.
-    %p
+      We cannot render this merge request properly because
+      - if @merge_request.for_fork? && !@merge_request.source_project
+        fork project was removed
+      - elsif !@merge_request.source_branch_exists?
+        %span.badge.badge-inverse= @merge_request.source_branch
+        does not exist in
+        %span.badge.badge-info= @merge_request.source_project_path
+      - elsif !@merge_request.target_branch_exists?
+        %span.badge.badge-inverse= @merge_request.target_branch
+        does not exist in
+        %span.badge.badge-info= @merge_request.target_project_path
+      - else
+        of internal error
+
+    %strong
       Please close Merge Request or change branches with existing one
 
